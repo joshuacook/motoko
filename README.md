@@ -1,284 +1,357 @@
-# motoko
+# Motoko: Rails for Context
 
-> A Python package for building role-based AI agents with model flexibility and tool execution
+**Context management framework for AI-powered workflows**
 
-Named after **Major Motoko Kusanagi** from *Ghost in the Shell* - an agent that dives into different contexts, switches roles, and interfaces seamlessly with systems.
+Motoko is to context management what Rails is to web applications - enforced conventions, smart querying, and safe operations for managing project context, tasks, and entities.
 
-## Overview
+## Features
 
-**motoko** replicates Claude Code's agent loop and tool execution patterns as a pure Python package, enabling:
-
-- 🔄 **Model Flexibility**: Swap between Claude, Gemini, or other LLM providers
-- 🎭 **Role Management**: Dynamic role switching and multi-role conversations
-- 🛠️ **Rich Toolset**: Files, web, git, bash, and custom Python tools
-- ⚡ **Streaming**: Real-time responses across all providers
-- 📦 **Pure Python**: Direct control, no subprocess management
-
-## Status
-
-🚧 **In Development** - Currently implementing Epic 1: Foundation
-
-See [SPEC.md](SPEC.md) for detailed specifications and [EPICS.md](EPICS.md) for development roadmap.
-
-## Installation
-
-```bash
-# Development installation
-cd motoko
-pip install -e ".[dev]"
-```
-
-## Quick Start
-
-```python
-from motoko import Agent, create_model, ReadFileTool, GlobTool
-
-# Example 1: Agent with tools
-model = create_model("claude-3-5-sonnet-20241022")
-
-tools = [
-    ReadFileTool(workspace="/path/to/project"),
-    GlobTool(workspace="/path/to/project"),
-]
-
-agent = Agent(
-    model=model,
-    tools=tools,
-    workspace="/path/to/project"
-)
-
-# Agent will use tools automatically to answer questions
-response = agent.chat(
-    message="How many Python files are in this project?",
-    system_prompt="You are a helpful coding assistant"
-)
-print(response.text)
-
-# Example 2: Direct model usage (no tools)
-from motoko import Message, MessageRole
-
-model = create_model("gemini-2.0-flash-exp")
-messages = [Message(role=MessageRole.USER, content="Hello!")]
-response = model.chat(messages=messages, system="You are helpful")
-print(response.text)
-
-# Example 3: Model switching
-for model_name in ["claude-3-5-sonnet-20241022", "gemini-2.0-flash-exp"]:
-    model = create_model(model_name)
-    response = model.chat(messages=messages)
-    print(f"{model_name}: {response.text}")
-
-# Example 4: Using Skills
-from motoko import Agent, create_model, ReadFileTool, GlobTool
-
-model = create_model("claude-3-5-sonnet-20241022")
-tools = [ReadFileTool(workspace="/path/to/project"), GlobTool(workspace="/path/to/project")]
-
-agent = Agent(
-    model=model,
-    tools=tools,
-    workspace="/path/to/project",
-    skills_dir="/path/to/skills"  # Directory containing skill .md files
-)
-
-# List available skills
-print("Available skills:", [s['name'] for s in agent.list_skills()])
-
-# Invoke a skill with parameters
-response = agent.invoke_skill(
-    skill_name="code-review",
-    file_pattern="*.py",
-    focus="security"
-)
-print(response.text)
-
-# Example 5: Role Management
-from motoko import Agent, create_model, ReadFileTool, WriteFileTool
-
-model = create_model("claude-3-5-sonnet-20241022")
-agent = Agent(model=model, tools=[ReadFileTool(), WriteFileTool()])
-
-# Add roles with different capabilities
-agent.add_role(
-    "researcher",
-    "You gather and analyze information",
-    tools=[ReadFileTool()]
-)
-
-agent.add_role(
-    "writer",
-    "You create documentation",
-    tools=[ReadFileTool(), WriteFileTool()]
-)
-
-# Chat as specific roles
-research = agent.chat_as("researcher", "Analyze the codebase")
-doc = agent.chat_as("writer", f"Document this: {research.text}")
-
-# Or switch roles mid-conversation
-agent.switch_role("You are a code reviewer", role_name="reviewer")
-response = agent.chat("Review the code quality")
-```
+- **🔧 MCP Native**: Built for Claude Code via Model Context Protocol
+- **📋 Smart Context Discovery**: Single tool call aggregates complete project state
+- **✅ Task Management**: Full lifecycle with validation and atomic operations
+- **🏢 Entity Management**: Projects, companies, journal entries, experiments
+- **🛡️ Safe Operations**: Validation, auto-commit, atomic operations
+- **🎭 Convention Enforcement**: Rails-like structure ensures consistency
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│           Agent (Core Loop)             │
-│  • Message management                   │
-│  • Tool orchestration                   │
-│  • Role switching                       │
-└─────────────┬───────────────────────────┘
-              │
-      ┌───────┴────────┐
-      │                │
-┌─────▼─────┐    ┌────▼─────┐
-│  Models   │    │  Tools   │
-│           │    │          │
-│ Anthropic │    │  Files   │
-│  Gemini   │    │   Web    │
-│  OpenAI   │    │   Git    │
-│   ...     │    │   Bash   │
-└───────────┘    └──────────┘
+┌─────────────────────────────────┐
+│   Claude Code (MCP Client)      │
+│   • Auto-discovers motoko tools │
+│   • Calls tools with typed params│
+└───────────────┬─────────────────┘
+                │ MCP Protocol (stdio)
+┌───────────────▼─────────────────┐
+│   Motoko MCP Server             │
+│   • 20+ tools for context mgmt  │
+│   • Direct filesystem access    │
+│   • Git auto-commit             │
+├─────────────────────────────────┤
+│   Data Lake (markdown + git)    │
+│   • data/tasks/                 │
+│   • data/projects/              │
+│   • data/companies/             │
+│   • context/README.md           │
+└─────────────────────────────────┘
 ```
 
-## Features
+## Installation
 
-### Model Abstraction
-- Unified interface across providers
-- Automatic tool format conversion
-- Consistent streaming API
-- Error handling abstraction
+```bash
+# Clone and install
+cd ~/working
+git clone <repository-url> motoko
+cd motoko
+uv sync
 
-### Tool System
-- Class-based tool implementation
-- JSON schema definitions
-- Verbosity control (minimal, normal, verbose)
-- Parallel execution support
+# Verify installation
+uv run motoko --help
+```
 
-### Agent Loop
-- Claude Code-style tool calling
-- Multi-turn conversations
-- Context management
-- Error recovery
+## Configuration
 
-### Skills Framework
-- Reusable capabilities defined in markdown
-- YAML frontmatter for metadata
-- Parameter substitution in prompts
-- Tool requirements validation
-- Sync and streaming skill execution
+### Claude Code Integration
 
-### Role Management
-- Dynamic role switching mid-conversation
-- Multiple roles in one session
-- Role-specific tool access and permissions
-- Role state and history tracking
-- Streaming support for roles
+Add motoko to Claude Code's MCP settings:
+
+**`~/.config/claude-code/mcp_settings.json`:**
+```json
+{
+  "mcpServers": {
+    "motoko": {
+      "command": "uv",
+      "args": ["--directory", "/Users/YOUR_USERNAME/working/motoko", "run", "motoko", "serve-mcp"]
+    }
+  }
+}
+```
+
+**Important:** Replace `/Users/YOUR_USERNAME/working/motoko` with your actual motoko installation path.
+
+### Restart Claude Code
+
+After configuring MCP settings, restart Claude Code. Motoko tools will be automatically discovered and available.
+
+## Quick Start
+
+### 1. Initialize a New Workspace
+
+```bash
+cd ~/working/my-project
+```
+
+In Claude Code:
+```
+User: "Initialize a motoko workspace here"
+Claude: [Calls workspace_init tool]
+```
+
+This creates:
+```
+my-project/
+├── data/
+│   ├── tasks/
+│   ├── projects/
+│   ├── companies/
+│   ├── journal/
+│   └── ...
+├── context/
+│   └── README.md
+├── roles/
+└── img/
+```
+
+### 2. Get Project State
+
+```
+User: "What's the current state of this project?"
+Claude: [Calls context_summary tool]
+```
+
+Returns complete workspace state in one call:
+- Task counts (open, completed, cancelled)
+- Available projects and companies
+- Recent git activity
+- Available roles
+
+### 3. Manage Tasks
+
+```
+User: "Create a task to implement authentication for the API project"
+Claude: [Calls task_create(title="Implement authentication", project="API")]
+
+User: "Show me all open tasks"
+Claude: [Calls task_list(status="open")]
+
+User: "Mark tasks 11 and 12 as complete"
+Claude: [Calls task_complete([11, 12])]
+```
+
+### 4. Manage Projects
+
+```
+User: "Create a project called NEW_APP for a startup"
+Claude: [Calls project_create(code="NEW_APP", name="New App", type="startup")]
+
+User: "List all active projects"
+Claude: [Calls project_list(status="Active")]
+```
+
+## Available Tools
+
+Motoko provides 20+ MCP tools organized by function:
+
+### Context Discovery
+- **context_summary** - Complete workspace state in one call
+- **context_entities** - List all entities by type
+- **context_validate** - Validate workspace conventions
+- **context_recent** - Recently modified files
+
+### Task Management
+- **task_list** - List tasks with filters
+- **task_show** - Show complete task details
+- **task_create** - Create task with validation
+- **task_complete** - Mark tasks complete (atomic + git)
+- **task_cancel** - Cancel tasks
+- **task_reopen** - Reopen completed tasks
+
+### Project Management
+- **project_list** - List all projects
+- **project_show** - Show project details
+- **project_create** - Create new project
+- **project_update** - Update project metadata
+
+### Company Management
+- **company_list** - List all companies
+- **company_show** - Show company details
+- **company_create** - Create new company
+
+### Workspace Management
+- **workspace_init** - Initialize new workspace
+
+## Conventions
+
+Motoko enforces Rails-like conventions for consistency:
+
+### Task Naming
+```
+000001-PROJECT-task-name.md           # Open
+000001-COMPLETED-PROJECT-task-name.md # Completed
+000001-CANCELLED-PROJECT-task-name.md # Cancelled
+```
+
+- 6-digit zero-filled numbers (000001, 000002, ...)
+- PROJECT CODE in uppercase
+- Kebab-case slugs
+
+### Project/Company Codes
+```
+DEMAND.md          # Project code
+CHELLE.md          # Company code
+GEORGIA_TECH.md    # Underscores allowed
+```
+
+- Uppercase letters, numbers, underscores only
+- No spaces or special characters
+
+### Frontmatter Schema
+
+Tasks:
+```yaml
+---
+title: Task Title
+project: PROJECT_CODE
+priority: high
+status: To Do
+---
+# Task description
+```
+
+Projects:
+```yaml
+---
+code: PROJECT_CODE
+name: Full Project Name
+type: startup|consulting|creative|academic|employment
+status: Active|Paused|Archived
+---
+# Project context
+```
+
+## Benefits
+
+### vs. Manual File Operations
+
+**Before (manual):**
+```bash
+# 10+ commands to understand project
+ls data/tasks/
+cat data/tasks/000001-task.md
+cat data/tasks/000002-task.md
+# ... repeat for each file
+git log --oneline -5
+cat context/README.md
+```
+
+**After (motoko):**
+```
+Claude: [Calls context_summary()]
+# Returns complete state in one call
+```
+
+**Result:** 10x faster context discovery
+
+### vs. Unstructured Files
+
+**Before:**
+- Inconsistent naming (`task1.md`, `TODO_2.md`, `fix-bug.md`)
+- Missing metadata
+- No validation
+- Manual git commits
+
+**After:**
+- Enforced naming conventions
+- Validated frontmatter
+- Auto-validation
+- Auto-git commits
+
+**Result:** Zero convention violations, consistent structure
 
 ## Development
 
-```bash
-# Install dev dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest
-
-# Type checking
-mypy motoko
-
-# Linting
-ruff check motoko
-```
-
-## Project Structure
+### Project Structure
 
 ```
 motoko/
-├── motoko/              # Main package
-│   ├── agent.py         # Agent class
-│   ├── types.py         # Core types
-│   ├── models/          # Model implementations
-│   │   ├── base.py      # BaseModel
-│   │   ├── anthropic.py # Anthropic Claude
-│   │   ├── gemini.py    # Google Gemini
-│   │   └── factory.py   # Model factory
-│   ├── tools/           # Tool implementations
-│   │   ├── base.py      # BaseTool
-│   │   ├── files.py     # File tools
-│   │   ├── web.py       # Web tools
-│   │   ├── git.py       # Git tools
-│   │   └── bash.py      # Bash tool
-│   ├── skills/          # Skills framework
-│   │   ├── skill.py     # Skill class
-│   │   └── loader.py    # SkillLoader
-│   └── streaming.py     # SSE utilities
-├── skills/              # Example skill definitions
-│   ├── code-review.md
-│   ├── summarize-file.md
-│   ├── search-and-explain.md
-│   └── refactor-suggestions.md
-├── tests/               # Test suite
-├── examples/            # Usage examples
-├── SPEC.md              # Technical specification
-├── EPICS.md             # Development epics
-└── README.md            # This file
+├── motoko/
+│   ├── cli/            # CLI commands
+│   ├── mcp/            # MCP server
+│   ├── tasks/          # Task manager
+│   ├── projects/       # Project manager
+│   ├── companies/      # Company manager
+│   └── tools/          # Agent tools
+├── MOTOKO_SPEC.md      # Complete specification
+├── CONVENTIONS.md       # Entity conventions
+└── README.md           # This file
+```
+
+### Testing
+
+```bash
+# Run tests
+uv run pytest
+
+# Test MCP server manually
+cd ~/working/test-workspace
+uv --directory ~/working/motoko run motoko serve-mcp
+```
+
+## Troubleshooting
+
+### Tools Not Appearing in Claude Code
+
+1. Check MCP settings path is correct
+2. Restart Claude Code completely
+3. Verify motoko installation: `uv run motoko --help`
+4. Check Claude Code logs for MCP errors
+
+### Git Auto-Commit Not Working
+
+Motoko requires a git repository:
+```bash
+cd your-workspace
+git init
+git add .
+git commit -m "Initial commit"
+```
+
+### Validation Errors
+
+Run validation with auto-fix:
+```
+User: "Validate this workspace and fix issues"
+Claude: [Calls context_validate(fix=true)]
 ```
 
 ## Roadmap
 
-### Phase 1: Foundation ✅
-- [x] Epic 1: Package structure and base classes
-- [x] Epic 2: Model abstraction layer
-- [x] Epic 3: Tool system
-- [x] Epic 4: Agent loop
-- [x] Epic 5: Skills framework
-- [x] Epic 6: Streaming & real-time updates
-- [x] Epic 7: Role management
+### Completed (MVP)
+- ✅ MCP server with stdio transport
+- ✅ Context discovery tools
+- ✅ Complete task lifecycle management
+- ✅ Project and company management
+- ✅ Workspace validation and initialization
 
-### Phase 2: Testing & Integration
-- [ ] Epic 9: Testing & QA ← **Next**
+### Future
+- 🚧 MCP resources for direct context file access
+- 🚧 Journal and experiment management
+- 🚧 Inbox workflow automation
+- 🚧 Context graph visualization
+- 🚧 Full-text search across entities
+- 🚧 Multi-workspace support
 
-### Phase 4: Production
-- [ ] Epic 8: Integration with existing apps
-- [ ] Epic 9: Testing & QA (performance, CI/CD)
+## Documentation
 
-**Note**: Epic 9 (Testing) runs in parallel with development, with checkpoints after each phase.
-
-See [EPICS.md](EPICS.md) for detailed breakdown.
-
-## Use Cases
-
-**motoko** is designed for applications that need:
-
-- **Domain-specific assistants** with specialized roles
-- **Multi-model support** to leverage different LLM strengths
-- **Tool-based interactions** with files, web, git, etc.
-- **Role-based workflows** with context switching
-- **Production deployments** requiring model flexibility
-
-### Current Applications
-
-Three production apps will use motoko:
-
-1. **coyote** - Artist management with role-based conversations
-2. **escuela** - Educational learning with teaching roles
-3. **project-management** - PM and task tracking
+- **MOTOKO_SPEC.md** - Complete technical specification
+- **CONVENTIONS.md** - Entity schemas and naming patterns
+- **Architecture diagrams** - See MOTOKO_SPEC.md
 
 ## Philosophy
 
-- **Model Agnostic**: Don't lock into one provider
-- **Role Focused**: Domain expertise through role context
-- **Tool Powered**: Capabilities through tool execution
-- **Markdown First**: Simple, readable, version-controlled data
-- **Pure Python**: Direct control and maintainability
+> "Convention over Configuration + ActiveRecord for Data Lake"
 
-## Inspiration
+Motoko brings Rails philosophy to AI context management:
+1. **Conventions** enforce consistency (like Rails migrations)
+2. **Smart querying** aggregates state (like ActiveRecord)
+3. **Safe operations** prevent errors (like Rails validations)
+4. **Scaffolding** bootstraps structure (like Rails generators)
 
-- **Claude Code**: Agent loop and tool patterns
-- **Ghost in the Shell**: Role flexibility and system integration
-- **Unix Philosophy**: Do one thing well, compose simply
+The result: **Rails for Context Management**
+
+## Name Origin
+
+**Major Motoko Kusanagi** from *Ghost in the Shell* - an agent that dives into different contexts, switches roles, and interfaces seamlessly with systems.
 
 ## License
 
@@ -286,21 +359,15 @@ MIT
 
 ## Contributing
 
-This is currently a personal project. Contributions welcome once core implementation is complete.
+Contributions welcome! Please file issues or submit pull requests.
 
-## Name Origin
+## Support
 
-**Major Motoko Kusanagi** is the protagonist of *Ghost in the Shell*. She:
-
-- Dives into different systems and contexts (like switching roles)
-- Questions identity and consciousness (like multi-role agents)
-- Interfaces seamlessly with technology (like tool execution)
-- Adapts to any situation (like model flexibility)
-
-A fitting namesake for an agent that embodies these qualities.
+- **Issues**: GitHub Issues
+- **Discussions**: GitHub Discussions
 
 ---
 
-**Status**: Epic 1 Complete
-**Version**: 0.1.0
-**Last Updated**: 2025-01-18
+**Status**: MVP Complete
+**Version**: 1.0.0
+**Last Updated**: 2025-01-19
