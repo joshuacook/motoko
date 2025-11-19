@@ -1,0 +1,29 @@
+name: motoko
+description: Motoko context management chat interface
+version: 1.0.0
+
+# Deployment configuration
+deployment:
+  port: 8000
+  subdomain: motoko
+
+  # Environment variables (values come from GCP Secret Manager)
+  secrets:
+    - ANTHROPIC_API_KEY
+    - GOOGLE_API_KEY
+    - JWT_SECRET
+    - PASSWORD_HASH
+
+  # Optional environment variables
+  environment:
+    GIT_USER_NAME: Motoko
+    GIT_USER_EMAIL: motoko@agent.local
+    WORKSPACE_PATH: /workspace
+    DATABASE_PATH: /data/conversations.db
+
+# Health check
+healthcheck:
+  path: /health
+  interval: 30s
+  timeout: 10s
+  retries: 3

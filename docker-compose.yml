@@ -1,0 +1,82 @@
+services:
+  # Motoko Chat Backend
+  backend:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: motoko-chat-backend
+    environment:
+      # API Keys
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+
+      # Authentication
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      PASSWORD_HASH: ${PASSWORD_HASH:?PASSWORD_HASH is required}
+
+      # Database
+      DATABASE_PATH: /data/conversations.db
+
+      # Workspace
+      WORKSPACE_PATH: /workspace
+
+      # Git configuration
+      GIT_COMMITTER_NAME: ${GIT_USER_NAME:-Motoko}
+      GIT_COMMITTER_EMAIL: ${GIT_USER_EMAIL:-motoko@agent.local}
+      GIT_AUTHOR_NAME: ${GIT_USER_NAME:-Motoko}
+      GIT_AUTHOR_EMAIL: ${GIT_USER_EMAIL:-motoko@agent.local}
+
+    volumes:
+      # Persistent database
+      - ${DB_DIR:-./data}:/data
+
+      # Workspace (project files) - read-write for git operations
+      - ${WORKSPACE_DIR:-.}:/workspace
+
+      # Git credentials (optional)
+      - ${HOME}/.ssh:/root/.ssh:ro
+
+    # Don't expose port externally - only via Caddy
+    expose:
+      - "8000"
+
+    restart: unless-stopped
+    networks:
+      - motoko-network
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Caddy Reverse Proxy
+  caddy:
+    image: caddy:2-alpine
+    container_name: motoko-chat-caddy
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      CADDY_EMAIL: ${CADDY_EMAIL:-root@joshuacook.net}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - motoko-network
+
+volumes:
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+
+networks:
+  motoko-network:
+    driver: bridge

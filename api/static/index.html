@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motoko Chat</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {}
+            }
+        }
+    </script>
+</head>
+<body class="antialiased min-h-screen bg-white dark:bg-gray-900 text-sm">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Login Component
+        function LoginPage({ onLoginSuccess }) {
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [isLoading, setIsLoading] = useState(false);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError('');
+                setIsLoading(true);
+
+                try {
+                    const response = await fetch('/auth/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password }),
+                        credentials: 'include'
+                    });
+
+                    if (response.ok) {
+                        onLoginSuccess();
+                    } else {
+                        setError('Invalid password');
+                    }
+                } catch (err) {
+                    setError('Login failed. Please try again.');
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            return (
+                <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:bg-gray-900 px-4">
+                    <div className="max-w-md w-full">
+                        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
+                            <h1 className="text-3xl font-bold text-center mb-2 text-gray-900 dark:text-white">
+                                Claude Agent Chat
+                            </h1>
+                            <p className="text-center text-gray-600 dark:text-gray-400 mb-8 text-sm">
+                                v2.0.0
+                            </p>
+
+                            {error && (
+                                <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                                    <p className="text-sm text-red-800 dark:text-red-200">{error}</p>
+                                </div>
+                            )}
+
+                            <form onSubmit={handleSubmit}>
+                                <div className="mb-6">
+                                    <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                        Password
+                                    </label>
+                                    <input
+                                        id="password"
+                                        type="password"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder="Enter password"
+                                        disabled={isLoading}
+                                        autoFocus
+                                    />
+                                </div>
+
+                                <button
+                                    type="submit"
+                                    disabled={!password || isLoading}
+                                    className="w-full py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+                                >
+                                    {isLoading ? 'Logging in...' : 'Login'}
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Collapsible Tool Event Component
+        function ToolEvent({ event, defaultExpanded = false }) {
+            const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+
+            const getEventTitle = () => {
+                if (event.type === 'tool_use') {
+                    return `${event.name || 'Tool'}: ${JSON.stringify(event.input || {})}`;
+                } else if (event.type === 'tool_result') {
+                    return `Result: ${event.tool_name || 'Tool'}`;
+                }
+                return event.type;
+            };
+
+            const getEventContent = () => {
+                if (event.type === 'tool_result') {
+                    return event.output || event.content || '';
+                }
+                return JSON.stringify(event, null, 2);
+            };
+
+            return (
+                <div className="border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
+                    <button
+                        onClick={() => setIsExpanded(!isExpanded)}
+                        className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors flex items-center justify-between"
+                    >
+                        <span className="text-xs font-mono text-gray-700 dark:text-gray-300">
+                            {getEventTitle()}
+                        </span>
+                        <svg
+                            className={`w-4 h-4 text-gray-500 transition-transform ${isExpanded ? 'transform rotate-180' : ''}`}
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
+                    {isExpanded && (
+                        <div className="p-4 bg-white dark:bg-gray-900 border-t border-gray-300 dark:border-gray-600">
+                            <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 whitespace-pre-wrap overflow-x-auto">
+                                {getEventContent()}
+                            </pre>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // Main Chat Component
+        function ChatApp({ onLogout }) {
+            const [messages, setMessages] = useState([]);
+            const [input, setInput] = useState('');
+            const [isStreaming, setIsStreaming] = useState(false);
+            const [currentRole, setCurrentRole] = useState('architect');
+            const [availableRoles, setAvailableRoles] = useState(['architect', 'developer', 'project-manager', 'researcher']);
+            const [conversationId, setConversationId] = useState(() => {
+                // Load conversationId from localStorage on mount
+                return localStorage.getItem('conversationId') || null;
+            });
+            const [showSettings, setShowSettings] = useState(false);
+            const [fontSize, setFontSize] = useState('text-sm');
+            const [totalUsage, setTotalUsage] = useState({ input_tokens: 0, output_tokens: 0, cost: 0 });
+            const messagesEndRef = useRef(null);
+            const eventSourceRef = useRef(null);
+
+            // Load font size from localStorage
+            useEffect(() => {
+                const saved = localStorage.getItem('fontSize');
+                if (saved) setFontSize(saved);
+            }, []);
+
+            useEffect(() => {
+                localStorage.setItem('fontSize', fontSize);
+            }, [fontSize]);
+
+            // Save conversationId to localStorage
+            useEffect(() => {
+                if (conversationId) {
+                    localStorage.setItem('conversationId', conversationId);
+                }
+            }, [conversationId]);
+
+            // Load conversation history on mount
+            useEffect(() => {
+                if (conversationId) {
+                    fetch(`/api/conversations/${conversationId}`, { credentials: 'include' })
+                        .then(res => res.ok ? res.json() : Promise.reject())
+                        .then(data => {
+                            // Convert database messages to UI format
+                            const loadedMessages = data.messages.map(msg => {
+                                if (msg.type === 'user') {
+                                    return { type: 'user', content: msg.content, timestamp: msg.created_at };
+                                } else if (msg.type === 'assistant') {
+                                    return { type: 'assistant', content: msg.content, timestamp: msg.created_at };
+                                } else if (msg.type === 'tool_call' || msg.type === 'tool_result') {
+                                    return { type: 'events', events: [JSON.parse(msg.metadata || '{}')], timestamp: msg.created_at };
+                                }
+                                return null;
+                            }).filter(Boolean);
+                            setMessages(loadedMessages);
+
+                            // Load usage data from conversation
+                            if (data.conversation) {
+                                setTotalUsage({
+                                    input_tokens: data.conversation.input_tokens || 0,
+                                    output_tokens: data.conversation.output_tokens || 0,
+                                    cost: data.conversation.total_cost || 0
+                                });
+                            }
+                        })
+                        .catch(err => console.error('Failed to load conversation:', err));
+                }
+            }, []);
+
+            const scrollToBottom = () => {
+                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            };
+
+            useEffect(() => {
+                scrollToBottom();
+            }, [messages]);
+
+            // Load available roles
+            useEffect(() => {
+                fetch('/api/roles', { credentials: 'include' })
+                    .then(res => res.ok ? res.json() : Promise.reject())
+                    .then(data => {
+                        if (data.roles) {
+                            setAvailableRoles(data.roles.map(r => r.name));
+                        }
+                    })
+                    .catch(err => console.error('Failed to load roles:', err));
+            }, []);
+
+            const handleRoleChange = async (newRole) => {
+                if (newRole === currentRole) return;
+
+                try {
+                    const response = await fetch('/api/role', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ role: newRole }),
+                        credentials: 'include'
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        setCurrentRole(newRole);
+
+                        // Add system message about role switch
+                        setMessages(prev => [...prev, {
+                            type: 'system',
+                            content: data.message || `Switched to ${newRole} role`,
+                            timestamp: new Date().toISOString()
+                        }]);
+                    }
+                } catch (error) {
+                    console.error('Error switching role:', error);
+                }
+            };
+
+            const sendMessage = async () => {
+                if (!input.trim() || isStreaming) return;
+
+                const userMessage = {
+                    type: 'user',
+                    content: input,
+                    timestamp: new Date().toISOString()
+                };
+
+                setMessages(prev => [...prev, userMessage]);
+                const messageText = input;
+                setInput('');
+                setIsStreaming(true);
+
+                try {
+                    // First, send the message
+                    const sendResp = await fetch('/api/message', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            message: messageText,
+                            conversation_id: conversationId
+                        }),
+                        credentials: 'include'
+                    });
+
+                    if (!sendResp.ok) throw new Error('Failed to send message');
+
+                    const sendData = await sendResp.json();
+                    if (sendData.conversation_id && !conversationId) {
+                        setConversationId(sendData.conversation_id);
+                    }
+
+                    // Start SSE stream for response
+                    const streamUrl = `/api/stream?conversation_id=${sendData.conversation_id}&message=${encodeURIComponent(messageText)}`;
+                    const eventSource = new EventSource(streamUrl);
+                    eventSourceRef.current = eventSource;
+
+                    let assistantContent = '';
+                    const streamEvents = [];
+
+                    eventSource.addEventListener('message', (e) => {
+                        try {
+                            const event = JSON.parse(e.data);
+
+                            if (event.type === 'content_block_delta') {
+                                // Accumulate assistant text
+                                if (event.delta && event.delta.text) {
+                                    assistantContent += event.delta.text;
+                                    setMessages(prev => {
+                                        const newMessages = [...prev];
+                                        const lastMsg = newMessages[newMessages.length - 1];
+                                        if (lastMsg && lastMsg.type === 'assistant') {
+                                            lastMsg.content = assistantContent;
+                                        } else {
+                                            newMessages.push({
+                                                type: 'assistant',
+                                                content: assistantContent,
+                                                timestamp: new Date().toISOString()
+                                            });
+                                        }
+                                        return newMessages;
+                                    });
+                                }
+                            } else if (['tool_use', 'tool_result', 'activity', 'error'].includes(event.type)) {
+                                // Add tool/activity event
+                                streamEvents.push(event);
+                                setMessages(prev => {
+                                    // Check if we already have an events container
+                                    const newMessages = [...prev];
+                                    const lastMsg = newMessages[newMessages.length - 1];
+                                    if (lastMsg && lastMsg.type === 'events') {
+                                        lastMsg.events.push(event);
+                                    } else {
+                                        newMessages.push({
+                                            type: 'events',
+                                            events: [event],
+                                            timestamp: new Date().toISOString()
+                                        });
+                                    }
+                                    return newMessages;
+                                });
+                            } else if (event.type === 'message_stop' || event.type === 'done') {
+                                // Accumulate usage/cost information
+                                if (event.usage || event.cost) {
+                                    setTotalUsage(prev => ({
+                                        input_tokens: prev.input_tokens + (event.usage?.input_tokens || 0),
+                                        output_tokens: prev.output_tokens + (event.usage?.output_tokens || 0),
+                                        cost: prev.cost + (event.cost || 0)
+                                    }));
+                                }
+                                eventSource.close();
+                                setIsStreaming(false);
+                            }
+                        } catch (err) {
+                            console.error('Error parsing event:', err);
+                        }
+                    });
+
+                    eventSource.addEventListener('error', (e) => {
+                        console.error('SSE error:', e);
+                        eventSource.close();
+                        setIsStreaming(false);
+                    });
+
+                } catch (error) {
+                    console.error('Error:', error);
+                    setMessages(prev => [...prev, {
+                        type: 'error',
+                        content: error.message,
+                        timestamp: new Date().toISOString()
+                    }]);
+                    setIsStreaming(false);
+                }
+            };
+
+            const handleInterrupt = async () => {
+                if (eventSourceRef.current) {
+                    eventSourceRef.current.close();
+                }
+
+                try {
+                    await fetch('/api/interrupt', {
+                        method: 'POST',
+                        credentials: 'include'
+                    });
+                } catch (err) {
+                    console.error('Interrupt failed:', err);
+                }
+
+                setIsStreaming(false);
+            };
+
+            const handleLogout = async () => {
+                try {
+                    await fetch('/auth/logout', {
+                        method: 'POST',
+                        credentials: 'include'
+                    });
+                    onLogout();
+                } catch (err) {
+                    console.error('Logout failed:', err);
+                }
+            };
+
+            const handleNewConversation = () => {
+                // Close any active streams
+                if (eventSourceRef.current) {
+                    eventSourceRef.current.close();
+                }
+
+                // Clear state
+                setMessages([]);
+                setConversationId(null);
+                setIsStreaming(false);
+                setTotalUsage({ input_tokens: 0, output_tokens: 0, cost: 0 });
+
+                // Clear localStorage
+                localStorage.removeItem('conversationId');
+            };
+
+            const handleKeyPress = (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            };
+
+            return (
+                <div className={`flex flex-col h-screen ${fontSize}`}>
+                    <div className="flex-1 flex flex-col max-w-5xl mx-auto w-full p-3 sm:p-4 md:p-6">
+                        {/* Header */}
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4 mb-4 sm:mb-6 pb-4 sm:pb-6 border-b border-gray-200 dark:border-gray-700">
+                            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
+                                    Claude Agent Chat
+                                </h1>
+                                <span className="px-2 py-1 text-xs font-mono bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded">
+                                    v2.0.0
+                                </span>
+                                <select
+                                    value={currentRole}
+                                    onChange={(e) => handleRoleChange(e.target.value)}
+                                    className="px-2 py-1 text-xs font-medium bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200 rounded border-none outline-none cursor-pointer hover:bg-purple-200 dark:hover:bg-purple-800 transition-colors capitalize"
+                                    title="Select role"
+                                >
+                                    {availableRoles.map(role => (
+                                        <option key={role} value={role} className="capitalize">
+                                            {role.replace('-', ' ')}
+                                        </option>
+                                    ))}
+                                </select>
+                                <div className="px-2 py-1 text-xs font-mono bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 rounded whitespace-nowrap">
+                                    {(() => {
+                                        const used = totalUsage.input_tokens + totalUsage.output_tokens;
+                                        const total = 200000; // Claude Sonnet 4.5 context window
+                                        const remaining = total - used;
+                                        const percent = ((used / total) * 100).toFixed(1);
+                                        return `${used.toLocaleString()} / ${total.toLocaleString()} tokens (${percent}%)`;
+                                    })()}
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={handleNewConversation}
+                                    className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                                    title="Start a new conversation"
+                                >
+                                    New Chat
+                                </button>
+                                <button
+                                    onClick={() => setShowSettings(!showSettings)}
+                                    className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                                    title="Settings"
+                                >
+                                    <svg className="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    </svg>
+                                </button>
+                                <button
+                                    onClick={handleLogout}
+                                    className="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                                >
+                                    Logout
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Settings Modal */}
+                        {showSettings && (
+                            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setShowSettings(false)}>
+                                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+                                    <div className="flex justify-between items-center mb-6">
+                                        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h2>
+                                        <button
+                                            onClick={() => setShowSettings(false)}
+                                            className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                        >
+                                            <svg className="w-6 h-6 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                        </button>
+                                    </div>
+
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                                                Font Size
+                                            </label>
+                                            <div className="space-y-2">
+                                                {[
+                                                    { value: 'text-xs', label: 'Extra Small' },
+                                                    { value: 'text-sm', label: 'Small (Default)' },
+                                                    { value: 'text-base', label: 'Medium' },
+                                                    { value: 'text-lg', label: 'Large' }
+                                                ].map(option => (
+                                                    <button
+                                                        key={option.value}
+                                                        onClick={() => setFontSize(option.value)}
+                                                        className={`w-full p-3 rounded-lg text-left transition-colors ${
+                                                            fontSize === option.value
+                                                                ? 'bg-blue-500 text-white'
+                                                                : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-gray-600'
+                                                        }`}
+                                                    >
+                                                        {option.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Messages */}
+                        <div className="flex-1 overflow-y-auto mb-4 sm:mb-6 space-y-4 sm:space-y-6 px-1 sm:px-2">
+                            {messages.length === 0 && (
+                                <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-600">
+                                    <p className="text-center px-4">
+                                        Send a message to start chatting with Claude Code
+                                    </p>
+                                </div>
+                            )}
+                            {messages.map((msg, idx) => (
+                                <div key={idx}>
+                                    {msg.type === 'user' && (
+                                        <div className="flex justify-end">
+                                            <div className="max-w-[90%] sm:max-w-[85%] md:max-w-[75%] rounded-xl sm:rounded-2xl px-3 sm:px-4 md:px-5 py-2 sm:py-3 shadow-sm bg-blue-500 text-white">
+                                                <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {msg.type === 'assistant' && (
+                                        <div className="flex justify-start">
+                                            <div className="max-w-[90%] sm:max-w-[85%] md:max-w-[75%] rounded-xl sm:rounded-2xl px-3 sm:px-4 md:px-5 py-2 sm:py-3 shadow-sm bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-200 dark:border-gray-700">
+                                                <div
+                                                    className="prose prose-sm dark:prose-invert max-w-none"
+                                                    dangerouslySetInnerHTML={{ __html: marked.parse(msg.content) }}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                    {msg.type === 'events' && (
+                                        <div className="flex justify-start">
+                                            <div className="max-w-[90%] sm:max-w-[85%] md:max-w-[75%] space-y-2">
+                                                <p className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wide px-2">
+                                                    Claude Code Activity
+                                                </p>
+                                                {msg.events.map((event, eventIdx) => (
+                                                    <ToolEvent key={eventIdx} event={event} defaultExpanded={false} />
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {msg.type === 'system' && (
+                                        <div className="flex justify-center">
+                                            <div className="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 rounded-lg text-xs">
+                                                {msg.content}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {msg.type === 'error' && (
+                                        <div className="flex justify-start">
+                                            <div className="max-w-[90%] sm:max-w-[85%] md:max-w-[75%] rounded-xl px-4 py-3 shadow-sm bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-800">
+                                                <p className="text-sm font-semibold mb-1">Error</p>
+                                                <p className="text-sm">{msg.content}</p>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+
+                            <div ref={messagesEndRef} />
+                        </div>
+
+                        {/* Input */}
+                        <div className="flex gap-2 sm:gap-3 items-end">
+                            <textarea
+                                value={input}
+                                onChange={(e) => setInput(e.target.value)}
+                                onKeyPress={handleKeyPress}
+                                placeholder="Type a message..."
+                                disabled={isStreaming}
+                                className="flex-1 p-3 sm:p-4 border border-gray-300 dark:border-gray-600 rounded-xl sm:rounded-2xl resize-none bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm text-base"
+                                rows={2}
+                            />
+                            {isStreaming ? (
+                                <button
+                                    onClick={handleInterrupt}
+                                    className="px-4 sm:px-6 md:px-8 py-3 sm:py-4 bg-red-500 text-white rounded-xl sm:rounded-2xl hover:bg-red-600 transition-colors shadow-sm font-medium text-sm sm:text-base whitespace-nowrap"
+                                >
+                                    Stop
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={sendMessage}
+                                    disabled={!input.trim()}
+                                    className="px-4 sm:px-6 md:px-8 py-3 sm:py-4 bg-blue-500 text-white rounded-xl sm:rounded-2xl hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-sm font-medium text-sm sm:text-base whitespace-nowrap"
+                                >
+                                    Send
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Main App - Handles auth state
+        function App() {
+            const [isAuthenticated, setIsAuthenticated] = useState(null);
+
+            useEffect(() => {
+                // Check auth status on mount
+                fetch('/auth/status', { credentials: 'include' })
+                    .then(res => setIsAuthenticated(res.ok))
+                    .catch(() => setIsAuthenticated(false));
+            }, []);
+
+            if (isAuthenticated === null) {
+                return (
+                    <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:bg-gray-900">
+                        <div className="text-gray-600 dark:text-gray-400">Loading...</div>
+                    </div>
+                );
+            }
+
+            return isAuthenticated
+                ? <ChatApp onLogout={() => setIsAuthenticated(false)} />
+                : <LoginPage onLoginSuccess={() => setIsAuthenticated(true)} />;
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
