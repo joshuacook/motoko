@@ -78,6 +78,13 @@ def chat(
     )
 
 
+@app.command()
+def serve_mcp():
+    """Start MCP server (Model Context Protocol) for Claude Code integration."""
+    from motoko.mcp.server import serve
+    serve()
+
+
 def cli():
     """CLI entrypoint."""
     app()
