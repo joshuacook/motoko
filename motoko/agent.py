@@ -746,6 +746,55 @@ class Agent:
             return f"\n\n## Project Context\n\n{self.project_context}"
         return ""
 
+    def discover_roles(self) -> list[str]:
+        """Discover available roles from roles/ directory.
+
+        Returns:
+            List of role names found in roles/ directory
+        """
+        roles_dir = self.workspace / "roles"
+        if not roles_dir.exists():
+            return []
+
+        role_names = []
+        for role_file in roles_dir.glob("*.md"):
+            # Extract role name from filename (remove .md extension and numbering prefix)
+            role_name = role_file.stem
+            # Remove leading numbers and hyphens (e.g., "01-creative-sherpa" -> "creative-sherpa")
+            role_name = role_name.lstrip("0123456789-")
+            role_names.append(role_name)
+
+        return sorted(role_names)
+
+    def load_role_from_file(self, role_name: str) -> bool:
+        """Load a role definition from roles/{role}.md file.
+
+        Args:
+            role_name: Name of the role to load
+
+        Returns:
+            True if role was loaded successfully, False otherwise
+        """
+        roles_dir = self.workspace / "roles"
+        if not roles_dir.exists():
+            return False
+
+        # Try to find the role file (with or without number prefix)
+        role_files = list(roles_dir.glob(f"*{role_name}.md"))
+        if not role_files:
+            return False
+
+        role_file = role_files[0]
+        if not role_file.exists():
+            return False
+
+        # Read role definition
+        role_content = role_file.read_text()
+
+        # Register the role
+        self.add_role(role_name, role_content)
+        return True
+
     def reset(self) -> None:
         """Reset conversation state."""
         self.messages = []

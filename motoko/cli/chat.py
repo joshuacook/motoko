@@ -141,9 +141,17 @@ Be helpful, conversational, and collaborative."""
     # Update system prompt with project context and task context
     agent.current_system_prompt = default_system_prompt + project_context + tasks_context
 
+    # Discover available roles from roles/ directory
+    available_roles = agent.discover_roles()
+
     # Show project context to user if it exists
     if project_context_content:
         print_system(f"\n📋 Loaded project context from context/README.md\n")
+
+    # Show available roles if any exist
+    if available_roles:
+        print_system(f"🎭 Available roles: {', '.join(available_roles)}")
+        print_system(f"   Use /role <name> to switch roles\n")
 
     # Show tasks to user if any exist
     if tasks_summary and "No open tasks" not in tasks_summary:
@@ -309,7 +317,14 @@ def handle_command(command: str, agent: Agent, current_model: str) -> bool:
 
         role_name = parts[1]
         try:
+            # Try to get existing role
             role = agent.get_role(role_name)
+
+            # If not found, try loading from file
+            if not role:
+                if agent.load_role_from_file(role_name):
+                    role = agent.get_role(role_name)
+
             if role:
                 agent.switch_role(role.system_prompt, role_name=role_name)
                 print_system(f"✓ Switched to role: {role_name}")
