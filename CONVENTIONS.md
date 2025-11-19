@@ -367,6 +367,8 @@ artist-manager/
 - Communication style
 - Workflows and processes
 
+**IMPORTANT:** Roles use **only** `.md` files in motoko. Do not use `.json` permission files (those are Claude Code-specific and not needed in motoko).
+
 ### Context Files
 
 **Naming:** Use semantic, descriptive filenames
