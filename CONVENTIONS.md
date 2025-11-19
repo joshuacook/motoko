@@ -1,82 +1,347 @@
 # Motoko Conventions & Specifications
 
-**Version:** 1.0
+**Version:** 2.0
 **Date:** 2025-01-18
 
 ## Philosophy
 
 - **Convention over Configuration** - No config files, use file path conventions
+- **Data Lake Model** - Directories are tables, frontmatter is schema, markdown is context
+- **Universal Structure** - Same entity types across all repositories
 - **Markdown as Code** - Everything is markdown files (self-documenting)
 - **Git as History** - Always commit, working directory stays clean
 - **Semantic Filenames** - Filenames are context clues
 - **No Vector Stores** - Load entire markdown files into context
 - **Conversational First** - Agent responds with text before using tools
+- **Role + Context Separation** - Role = behavioral mode, Context = current focus
 
-## Directory Structure
+## Architecture: Three Orthogonal Dimensions
+
+### 1. Entity Type (Table) - WHAT the data is
+Universal schema defined by directory. Same across all repositories.
+
+### 2. Role (Behavior) - HOW to interact
+Behavioral mode: communication style, validation strictness, emphasis.
+
+### 3. Context (Focus) - WHERE you're working
+Current focus: which projects/areas are active right now.
+
+## Universal Directory Structure (Entity Types)
+
+Every motoko workspace uses these "tables":
 
 ```
 ./
-├── tasks/                          # Task management
-│   ├── 000001-task-name.md
-│   └── 000001-COMPLETED-task-name.md
-│
-├── roles/                          # Role definitions and context
-│   ├── artist-manager/
-│   │   ├── description.md         # Role system prompt
-│   │   └── context/
-│   │       ├── music-between-overview.md
-│   │       └── instagram-ad-strategy.md
-│   ├── educator/
-│   │   ├── description.md
-│   │   └── context/
-│   │       └── curriculum-framework.md
-│   └── project-manager/
-│       ├── description.md
-│       └── context/
-│           └── proposal-template.md
-│
-├── context/                        # Project-wide context
-│   ├── README.md                  # Main project context (auto-loaded)
-│   └── sessions/                  # Session summaries
-│       ├── 2025-01-18-music-between-post-creation.md
-│       └── 2025-01-19-instagram-ad-setup.md
-│
-└── .git/                          # Git history as record
+├── tasks/              # Work items, todos, tickets
+├── projects/           # Project definitions and context
+├── companies/          # Companies, clients, organizations
+├── journal/            # Narrative documentation, logs
+├── sessions/           # Auto-generated session summaries
+├── experiments/        # Explorations, tests, trials
+├── inbox/              # Unprocessed items, quick captures
+├── roles/              # Role definitions (behavioral modes)
+├── img/                # Visual assets (special case)
+└── .git/               # Git history as record
 ```
 
-## Task Management
+**Key Principle:**
+- Directory name = Entity type (table name)
+- Each file = Entity (table row)
+- Frontmatter = Structured data (schema/columns)
+- Markdown body = Unstructured context (narrative)
 
-### File Naming Convention
+## Entity Pattern (Universal)
 
+Every entity follows this pattern:
+
+```yaml
+---
+# STRUCTURED DATA (schema defined by entity type)
+# Required and optional fields based on entity type
+field1: value
+field2: value
+---
+# UNSTRUCTURED CONTEXT (markdown)
+# Can be bullet points or rich narrative
+# Style determined by role, not structure
 ```
-{6-digit-number}-{kebab-case-name}.md
-{6-digit-number}-COMPLETED-{kebab-case-name}.md
+
+## Entity Type Schemas (Universal)
+
+### tasks/
+
+**Purpose:** Work items, todos, tickets (renamed from "tickets" for consistency)
+
+**Schema:**
+```yaml
+---
+number: string          # Auto-assigned, zero-filled (000001, 000002)
+title: string           # Required
+status: enum            # Required: To Do, In Progress, Blocked, Done
+priority: enum          # Optional: Low, Medium, High, Urgent
+project: string         # Optional: Reference to projects/{code}.md
+company: string         # Optional: Reference to companies/{code}.md
+created: date           # Auto-set
+updated: date           # Auto-update
+tags: list[string]      # Optional
+blocker: string         # Optional: Description of what's blocking
+due_date: date          # Optional
+---
+# Task description, context, decisions, next steps
+```
+
+**File Naming:**
+```
+{number:06d}-{project}-{kebab-case-slug}.md
+{number:06d}-COMPLETED-{project}-{kebab-case-slug}.md
 ```
 
 **Examples:**
-- `000001-fix-gemini-streaming-bug.md` (open)
-- `000002-COMPLETED-build-cli-interface.md` (completed)
+- `000001-MERCHANTS-databricks-provisioning.md`
+- `000002-COMPLETED-MUSIC_BETWEEN-instagram-ad-setup.md`
 
-**Rules:**
-- Use 6-digit zero-filled numbers: `000001`, `000002` (not `01`, `02`)
-- Task names in kebab-case
-- Completed tasks: Insert `-COMPLETED-` after number
-- Files are markdown, structure is flexible
+**Lifecycle:**
+1. **Create** - Auto-assign next number, create file
+2. **Work** - Update status, add context
+3. **Complete** - Rename file to add `-COMPLETED-`
+4. **Commit** - Always commit changes
 
-### Task Lifecycle
+### projects/
 
-1. **Create** - Agent uses `write_file` to create numbered task file
-2. **Work** - Read task, discuss approach, implement
-3. **Complete** - Use `bash` to rename: `mv 000001-task.md 000001-COMPLETED-task.md`
-4. **Commit** - Always commit task changes
+**Purpose:** Project definitions, goals, and context
 
-### Loading on Startup
+**Schema:**
+```yaml
+---
+code: string            # Required: SHORT_IDENTIFIER (all caps, underscores)
+name: string            # Required: Full project name
+type: enum              # Required: startup, consulting, creative, academic, employment
+status: enum            # Required: Active, Paused, Archived
+company: string         # Optional: Reference to companies/{code}.md
+start_date: date        # Optional
+end_date: date          # Optional
+tags: list[string]      # Optional
+---
+# Project background, goals, current state, key context
+```
 
-- Show top 10 open task **titles**
-- Load **content** of last 5 open tasks for context
-- Agent is aware of task system via system prompt
+**File Naming:**
+```
+{code}.md
+```
 
-## Role System
+**Examples:**
+- `MERCHANTS.md`
+- `MUSIC_BETWEEN.md`
+- `GEORGIA_TECH.md`
+
+### companies/
+
+**Purpose:** Companies, clients, organizations, institutions
+
+**Schema:**
+```yaml
+---
+code: string            # Required: SHORT_IDENTIFIER
+name: string            # Required: Full company name
+relationship: enum      # Required: founder, client, employer, institution
+industry: string        # Optional
+website: string         # Optional
+contact: string         # Optional
+---
+# Company background, relationship context, key people
+```
+
+**File Naming:**
+```
+{code}.md
+```
+
+**Examples:**
+- `CHELLE.md` (relationship: founder)
+- `MERCHANTS.md` (relationship: client)
+- `CALTECH.md` (relationship: institution)
+
+### journal/
+
+**Purpose:** Narrative documentation, daily logs, creative reflection
+
+**Schema:**
+```yaml
+---
+date: date              # Required: YYYY-MM-DD
+title: string           # Optional: Entry title
+tags: list[string]      # Optional
+project: string         # Optional: Reference to projects/
+---
+# Free-form narrative entry
+# Can be technical notes, creative reflection, daily log
+# Style determined by role
+```
+
+**File Naming:**
+```
+YYYY-MM-DD-{kebab-case-slug}.md
+```
+
+**Examples:**
+- `2025-01-18-day-one-studio-session.md`
+- `2025-01-19-merchants-infrastructure-review.md`
+
+### sessions/
+
+**Purpose:** Auto-generated session summaries (created during auto-compact)
+
+**Schema:**
+```yaml
+---
+date: date              # Required: YYYY-MM-DD
+topic: string           # Required: Auto-generated topic slug
+projects: list[string]  # Optional: Projects discussed
+duration: string        # Optional: Session length
+participants: list[string]  # Optional: For multi-user sessions
+---
+# Auto-generated session summary
+# Includes: summary, key decisions, context added, next steps
+```
+
+**File Naming:**
+```
+YYYY-MM-DD-{topic-slug}.md
+```
+
+**Examples:**
+- `2025-01-18-music-between-post-creation.md`
+- `2025-01-19-merchants-databricks-troubleshooting.md`
+
+**Generation:**
+- Triggered during auto-compact (when context window fills)
+- Agent summarizes conversation
+- Extracts topic from discussion
+- Commits to git automatically
+
+### experiments/
+
+**Purpose:** Explorations, tests, trials, creative experiments
+
+**Schema:**
+```yaml
+---
+name: string            # Required
+date: date              # Required: When started
+status: enum            # Required: exploring, validated, abandoned
+project: string         # Optional: Reference to projects/
+tags: list[string]      # Optional
+---
+# Experiment notes, process, results, learnings
+```
+
+**File Naming:**
+```
+{number:03d}-{kebab-case-name}.md
+```
+
+**Examples:**
+- `001-magazine-collage-technique.md`
+- `002-tx6-recording-chain.md`
+
+### inbox/
+
+**Purpose:** Unprocessed items, quick captures, temporary storage
+
+**Schema:**
+```yaml
+---
+date: date              # Required: When captured
+processed: boolean      # Required: false initially
+source: string          # Optional: Where it came from
+---
+# Quick capture content
+# To be processed and moved to appropriate entity type
+```
+
+**File Naming:**
+```
+YYYY-MM-DD-HHMM-{short-slug}.md
+```
+
+**Examples:**
+- `2025-01-18-1430-meeting-notes.md`
+- `2025-01-19-0900-idea-for-ad-copy.md`
+
+**Workflow:**
+1. Quick capture to inbox/
+2. Process: move to tasks/, journal/, experiments/
+3. Mark as processed or delete file
+
+### img/
+
+**Purpose:** Visual assets with optional metadata/analysis
+
+**Special Case:** Binary assets + optional markdown metadata
+
+**Structure:**
+- Binary files (.png, .jpg, .webp, .pdf) - The actual images
+- Optional .md files - Metadata and analysis (follows entity pattern)
+
+**Metadata Schema (Optional):**
+```yaml
+---
+image: string           # Required: Reference to binary file
+analyzed: string        # Optional: Who/what analyzed it
+date: date              # Optional: When created/captured
+tags: list[string]      # Optional
+project: string         # Optional: Reference to projects/
+---
+# Analysis, description, context
+# Can include interpretation, elements, choices, actions
+```
+
+**File Naming:**
+```
+{asset-name}.{ext}          # Binary asset
+{asset-name}.md             # Optional metadata (same name as asset)
+```
+
+**Examples:**
+```
+img/
+├── ceuta_000012.png                    # Binary image
+├── ceuta_000012.md                     # Metadata + analysis
+├── arabic-singing-diaspora.jpg         # Binary image (no metadata)
+└── DALL·E-2023-logo-concept.webp      # Binary image (no metadata)
+```
+
+**Usage:**
+- Not all images need .md files
+- .md files provide context when needed
+- Reference from other entities: `![desc](../img/file.png)`
+
+**Metadata Example:**
+```markdown
+# ceuta_000012
+
+**Image:** ceuta_000012.png
+**Analyzed:** coyote
+
+---
+
+# Analysis
+
+This album cover embodies...
+
+# Elements
+
+## Choices
+1. Rejecting naturalistic color schemes...
+```
+
+**Key Difference from Other Entities:**
+- Binary assets don't follow frontmatter pattern (they're not markdown)
+- Metadata is optional (not all images need it)
+- .md file describes the asset, doesn't replace it
+
+## Role System (Behavioral Definitions)
 
 ### Structure
 
