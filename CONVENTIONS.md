@@ -626,9 +626,9 @@ Agent: "Done! I've created task 000004-x.md and committed it."
 - ✅ Basic CLI with conversational interface
 - ✅ Model abstraction (Gemini, Claude)
 - ✅ Tool system (read, write, glob, grep, bash)
-- 🚧 Role system (to be implemented)
-- 🚧 Context loading (partial)
-- 🚧 Git auto-commit (to be implemented)
+- ✅ Role system (role discovery and loading from disk)
+- ✅ Context loading (project context from context/README.md)
+- ✅ Git auto-commit (auto-commits data/ directory changes)
 - 🚧 Auto-compact & session summaries (to be implemented)
 
 ## Future Considerations
