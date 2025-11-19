@@ -1277,7 +1277,15 @@ def serve():
     workspace = Path(workspace_path)
 
     # Run server
-    asyncio.run(stdio_server(app))
+    async def run_server():
+        async with stdio_server() as (read_stream, write_stream):
+            await app.run(
+                read_stream,
+                write_stream,
+                app.create_initialization_options()
+            )
+
+    asyncio.run(run_server())
 
 
 if __name__ == "__main__":
