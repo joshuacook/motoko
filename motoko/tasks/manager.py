@@ -45,7 +45,7 @@ class TaskManager:
             workspace: Project workspace directory
         """
         self.workspace = Path(workspace)
-        self.tasks_dir = self.workspace / "tasks"
+        self.tasks_dir = self.workspace / "data" / "tasks"
 
     def ensure_tasks_dir(self) -> None:
         """Create tasks directory if it doesn't exist."""
