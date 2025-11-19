@@ -130,16 +130,24 @@ Be helpful, conversational, and collaborative."""
         workspace=workspace_path,
     )
 
+    # Load project context
+    project_context_content = agent.load_project_context()
+    project_context = agent.get_project_context_for_prompt()
+
     # Load tasks and update system prompt
     tasks_summary = agent.load_tasks_context(limit=10)
     tasks_context = agent.get_tasks_for_prompt()
 
-    # Update system prompt with task context
-    agent.current_system_prompt = default_system_prompt + tasks_context
+    # Update system prompt with project context and task context
+    agent.current_system_prompt = default_system_prompt + project_context + tasks_context
+
+    # Show project context to user if it exists
+    if project_context_content:
+        print_system(f"\n📋 Loaded project context from context/README.md\n")
 
     # Show tasks to user if any exist
     if tasks_summary and "No open tasks" not in tasks_summary:
-        print_system(f"\n{tasks_summary}\n")
+        print_system(f"{tasks_summary}\n")
 
     # Preload starter roles for common use cases
     agent.add_role(

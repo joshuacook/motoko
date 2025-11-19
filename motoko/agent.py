@@ -74,6 +74,9 @@ class Agent:
         self.task_manager = TaskManager(self.workspace)
         self.tasks_context: str | None = None  # Cached task context for system prompt
 
+        # Project context
+        self.project_context: str | None = None  # Cached project context from context/README.md
+
     def chat(
         self,
         message: str,
@@ -719,6 +722,28 @@ class Agent:
         """
         if self.tasks_context:
             return f"\n\n## Current Tasks\n\n{self.tasks_context}"
+        return ""
+
+    def load_project_context(self) -> str | None:
+        """Load project context from context/README.md.
+
+        Returns:
+            Project context content or None if file doesn't exist
+        """
+        context_file = self.workspace / "context" / "README.md"
+        if context_file.exists():
+            self.project_context = context_file.read_text()
+            return self.project_context
+        return None
+
+    def get_project_context_for_prompt(self) -> str:
+        """Get project context to inject into system prompt.
+
+        Returns:
+            Project context string or empty string if no context
+        """
+        if self.project_context:
+            return f"\n\n## Project Context\n\n{self.project_context}"
         return ""
 
     def reset(self) -> None:
