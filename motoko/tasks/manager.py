@@ -164,6 +164,9 @@ class TaskManager:
         content = description if description else f"# {name}\n\n## Description\n\n## Execution\n\n"
         file_path.write_text(content)
 
+        # Auto-commit the new task
+        self._auto_commit(file_path, f"Create task {next_number:06d}: {kebab_name}")
+
         return Task(
             number=next_number,
             name=kebab_name,
@@ -218,6 +221,9 @@ class TaskManager:
         task.status = TaskStatus.COMPLETED
         task.file_path = new_path
 
+        # Auto-commit the change
+        self._auto_commit(new_path, f"Complete task {task.number:06d}: {task.name}")
+
         return task
 
     def reopen_task(self, number: int) -> Task | None:
@@ -249,6 +255,35 @@ class TaskManager:
         task.file_path = new_path
 
         return task
+
+    def _auto_commit(self, file_path: Path, commit_message: str) -> None:
+        """Auto-commit a file to git.
+
+        Args:
+            file_path: Path to file to commit
+            commit_message: Git commit message
+        """
+        import subprocess
+
+        try:
+            # Add file to git
+            subprocess.run(
+                ["git", "add", str(file_path)],
+                cwd=self.workspace,
+                check=True,
+                capture_output=True,
+            )
+
+            # Commit with message
+            subprocess.run(
+                ["git", "commit", "-m", commit_message],
+                cwd=self.workspace,
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError:
+            # Git command failed - silently continue
+            pass
 
     def get_open_tasks_summary(self, limit: int = 10) -> str:
         """Get a formatted summary of open tasks.

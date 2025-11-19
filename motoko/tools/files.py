@@ -170,6 +170,37 @@ class WriteFileTool(BaseTool):
             lines_written = len(content.splitlines())
             bytes_written = len(content.encode("utf-8"))
 
+            # Auto-commit if file is in data/ directory
+            commit_msg = None
+            try:
+                # Check if path is under data/ directory
+                relative_path = path.relative_to(self.workspace)
+                if relative_path.parts[0] == "data":
+                    # Auto-commit the file
+                    import subprocess
+
+                    subprocess.run(
+                        ["git", "add", str(path)],
+                        cwd=self.workspace,
+                        check=True,
+                        capture_output=True,
+                    )
+                    result = subprocess.run(
+                        [
+                            "git",
+                            "commit",
+                            "-m",
+                            f"Update {relative_path}",
+                        ],
+                        cwd=self.workspace,
+                        capture_output=True,
+                    )
+                    if result.returncode == 0:
+                        commit_msg = f" (committed to git)"
+            except (ValueError, subprocess.CalledProcessError):
+                # Not in data/ or git command failed - continue without commit
+                pass
+
             metadata = {
                 "action": "write",
                 "target": str(path),
@@ -177,8 +208,12 @@ class WriteFileTool(BaseTool):
                 "bytes": bytes_written,
             }
 
+            success_msg = f"Successfully wrote {lines_written} lines ({bytes_written} bytes) to {path}"
+            if commit_msg:
+                success_msg += commit_msg
+
             return self._create_result(
-                content=f"Successfully wrote {lines_written} lines ({bytes_written} bytes) to {path}",
+                content=success_msg,
                 metadata=metadata,
             )
 
