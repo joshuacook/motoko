@@ -92,6 +92,52 @@ async def list_tools() -> list[Tool]:
                 }
             }
         ),
+        Tool(
+            name="context_validate",
+            description="Validate workspace conventions and optionally fix issues",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "fix": {
+                        "type": "boolean",
+                        "description": "Attempt to auto-fix issues",
+                        "default": False
+                    }
+                }
+            }
+        ),
+        Tool(
+            name="context_recent",
+            description="Show recently modified entities across workspace",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days to look back",
+                        "default": 7
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of files to return",
+                        "default": 20
+                    }
+                }
+            }
+        ),
+        Tool(
+            name="workspace_init",
+            description="Initialize a new motoko workspace with directory structure",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Workspace path (defaults to current directory)"
+                    }
+                }
+            }
+        ),
         # Task Operation Tools
         Tool(
             name="task_show",
@@ -334,6 +380,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await _context_summary(**arguments)
         elif name == "context_entities":
             result = await _context_entities(**arguments)
+        elif name == "context_validate":
+            result = await _context_validate(**arguments)
+        elif name == "context_recent":
+            result = await _context_recent(**arguments)
+        elif name == "workspace_init":
+            result = await _workspace_init(**arguments)
         elif name == "task_list":
             result = await _task_list(**arguments)
         elif name == "task_show":
@@ -550,6 +602,242 @@ async def _context_entities(type: str | None = None) -> dict[str, Any]:
                 }
 
     return {"entities": results}
+
+
+async def _context_validate(fix: bool = False) -> dict[str, Any]:
+    """Validate workspace conventions.
+
+    Args:
+        fix: Whether to attempt auto-fix
+
+    Returns:
+        Validation results with errors/warnings
+    """
+    ws = get_workspace()
+    data_dir = ws / "data"
+
+    errors = []
+    warnings = []
+    fixed = []
+
+    # Check if data/ directory exists
+    if not data_dir.exists():
+        errors.append({
+            "type": "missing_directory",
+            "path": "data/",
+            "message": "data/ directory does not exist"
+        })
+        if fix:
+            data_dir.mkdir(parents=True, exist_ok=True)
+            fixed.append("Created data/ directory")
+
+    # Check for required entity directories
+    required_dirs = ["tasks", "projects", "companies", "journal", "sessions", "experiments", "inbox"]
+    for dir_name in required_dirs:
+        dir_path = data_dir / dir_name
+        if not dir_path.exists():
+            warnings.append({
+                "type": "missing_entity_dir",
+                "path": f"data/{dir_name}/",
+                "message": f"Entity directory data/{dir_name}/ does not exist"
+            })
+            if fix:
+                dir_path.mkdir(parents=True, exist_ok=True)
+                fixed.append(f"Created data/{dir_name}/ directory")
+
+    # Validate task filenames
+    tasks_dir = data_dir / "tasks"
+    if tasks_dir.exists():
+        tm = TaskManager(ws)
+        for file_path in tasks_dir.glob("*.md"):
+            parsed = tm._parse_filename(file_path.name)
+            if not parsed:
+                errors.append({
+                    "type": "invalid_task_filename",
+                    "path": str(file_path.relative_to(ws)),
+                    "message": f"Task filename does not match pattern: {file_path.name}"
+                })
+
+    # Check for context/README.md
+    context_readme = ws / "context" / "README.md"
+    if not context_readme.exists():
+        warnings.append({
+            "type": "missing_context",
+            "path": "context/README.md",
+            "message": "Project context file does not exist"
+        })
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "fixed": fixed if fix else [],
+        "summary": f"{len(errors)} errors, {len(warnings)} warnings" + (f", {len(fixed)} fixed" if fix else "")
+    }
+
+
+async def _context_recent(days: int = 7, limit: int = 20) -> dict[str, Any]:
+    """Show recently modified entities.
+
+    Args:
+        days: Number of days to look back
+        limit: Maximum number of files to return
+
+    Returns:
+        List of recently modified files
+    """
+    ws = get_workspace()
+    data_dir = ws / "data"
+
+    if not data_dir.exists():
+        return {"error": "No data/ directory found in workspace"}
+
+    # Collect all markdown files with modification times
+    now = datetime.now().timestamp()
+    cutoff = now - (days * 86400)
+
+    recent_files = []
+    for md_file in data_dir.glob("**/*.md"):
+        mtime = md_file.stat().st_mtime
+        if mtime >= cutoff:
+            time_ago_seconds = now - mtime
+            # Format time ago
+            if time_ago_seconds < 60:
+                time_ago = "just now"
+            elif time_ago_seconds < 3600:
+                minutes = int(time_ago_seconds / 60)
+                time_ago = f"{minutes}m ago"
+            elif time_ago_seconds < 86400:
+                hours = int(time_ago_seconds / 3600)
+                time_ago = f"{hours}h ago"
+            else:
+                days_ago = int(time_ago_seconds / 86400)
+                time_ago = f"{days_ago}d ago"
+
+            recent_files.append({
+                "path": str(md_file.relative_to(data_dir)),
+                "modified": time_ago,
+                "timestamp": int(mtime),
+            })
+
+    # Sort by modification time (newest first)
+    recent_files.sort(key=lambda x: x["timestamp"], reverse=True)
+
+    # Apply limit
+    recent_files = recent_files[:limit]
+
+    return {
+        "count": len(recent_files),
+        "files": recent_files,
+        "days": days,
+    }
+
+
+async def _workspace_init(path: str | None = None) -> dict[str, Any]:
+    """Initialize a new motoko workspace.
+
+    Args:
+        path: Workspace path (defaults to current directory)
+
+    Returns:
+        Initialization results
+    """
+    ws_path = Path(path) if path else get_workspace()
+
+    created = []
+    errors = []
+
+    # Create directory structure
+    dirs_to_create = [
+        "data/tasks",
+        "data/projects",
+        "data/companies",
+        "data/journal",
+        "data/sessions",
+        "data/experiments",
+        "data/inbox",
+        "context",
+        "roles",
+        "img",
+    ]
+
+    for dir_path_str in dirs_to_create:
+        dir_path = ws_path / dir_path_str
+        try:
+            dir_path.mkdir(parents=True, exist_ok=True)
+            created.append(dir_path_str)
+        except Exception as e:
+            errors.append({
+                "path": dir_path_str,
+                "error": str(e)
+            })
+
+    # Create context/README.md if it doesn't exist
+    context_readme = ws_path / "context" / "README.md"
+    if not context_readme.exists():
+        context_readme.write_text(f"""# {ws_path.name}
+
+## Overview
+
+Project overview and goals.
+
+## Current State
+
+Current project status and context.
+
+## Key Information
+
+Important information and links.
+""")
+        created.append("context/README.md")
+
+    # Create .gitignore if it doesn't exist
+    gitignore = ws_path / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text(""".venv/
+__pycache__/
+*.pyc
+.DS_Store
+""")
+        created.append(".gitignore")
+
+    # Initialize git if not already
+    git_dir = ws_path / ".git"
+    if not git_dir.exists():
+        try:
+            import subprocess
+            subprocess.run(
+                ["git", "init"],
+                cwd=ws_path,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "add", "."],
+                cwd=ws_path,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "Initialize motoko workspace"],
+                cwd=ws_path,
+                check=True,
+                capture_output=True,
+            )
+            created.append(".git (initialized)")
+        except Exception as e:
+            errors.append({
+                "path": ".git",
+                "error": str(e)
+            })
+
+    return {
+        "success": len(errors) == 0,
+        "workspace": str(ws_path),
+        "created": created,
+        "errors": errors,
+        "message": f"Initialized motoko workspace at {ws_path}" if len(errors) == 0 else "Initialization completed with errors"
+    }
 
 
 async def _task_list(
