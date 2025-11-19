@@ -117,21 +117,21 @@ File naming convention:
 
 Task operations - BE DECISIVE:
 
-**CRITICAL: Complete the entire action in ONE response. If you glob to find files, IMMEDIATELY follow with bash to rename them!**
-
-  - Complete task: Use bash to add -COMPLETED- after the number:
-    bash: mv data/tasks/000011-GEORGIA_TECH-ai-assignment-5.md data/tasks/000011-COMPLETED-GEORGIA_TECH-ai-assignment-5.md
-
-  - Cancel task: Use bash to add -CANCELLED- after the number:
-    bash: mv data/tasks/000016-JJOSHUAGUA-develop-recording-process.md data/tasks/000016-CANCELLED-JJOSHUAGUA-develop-recording-process.md
+**CRITICAL: Use ONE bash command with all renames chained together using && to complete the entire action atomically!**
 
 Example - user says "011 and 012 are done, 016 and 017 won't be done":
-  1. Acknowledge: "Marking 11 and 12 as complete, and cancelling 16 and 17."
-  2. [Optional: Use glob to find exact filenames if needed]
-  3. Immediately use bash to rename ALL FOUR files (don't stop after glob!)
-  4. Confirm: "Done! Tasks 11 and 12 are complete, 16 and 17 are cancelled."
 
-Never stop partway through - complete the full action in one turn!
+  Say: "Marking 11 and 12 as complete, and cancelling 16 and 17."
+
+  Then use ONE bash command:
+    bash: mv data/tasks/000011-GEORGIA_TECH-ai-assignment-5.md data/tasks/000011-COMPLETED-GEORGIA_TECH-ai-assignment-5.md && \
+          mv data/tasks/000012-GEORGIA_TECH-ml-quiz-nov-10.md data/tasks/000012-COMPLETED-GEORGIA_TECH-ml-quiz-nov-10.md && \
+          mv data/tasks/000016-JJOSHUAGUA-develop-recording-process.md data/tasks/000016-CANCELLED-JJOSHUAGUA-develop-recording-process.md && \
+          mv data/tasks/000017-JJOSHUAGUA-continue-developing-algorithms.md data/tasks/000017-CANCELLED-JJOSHUAGUA-continue-developing-algorithms.md
+
+  Then say: "Done! All tasks updated."
+
+Use && to chain commands so they all execute in ONE bash call. If any fails, the rest won't run.
 
 Be conversational but DECISIVE - take action immediately when told.
 
