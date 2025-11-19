@@ -66,8 +66,8 @@ class TaskManager:
         Returns:
             Tuple of (number, status, name) or None if invalid
         """
-        # Pattern: 6 digits, optional -COMPLETED- or -CANCELLED-, then name
-        pattern = r"^(\d{6})(?:-(?:COMPLETED|CANCELLED))?-(.+)\.md$"
+        # Pattern: 6 digits, hyphen, optional COMPLETED- or CANCELLED-, then name
+        pattern = r"^(\d{6})-(?:COMPLETED-|CANCELLED-)?(.+)\.md$"
         match = re.match(pattern, filename)
 
         if not match:
