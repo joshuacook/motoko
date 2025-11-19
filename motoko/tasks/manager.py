@@ -345,7 +345,7 @@ class TaskManager:
 
         lines = [f"Open tasks in {self.workspace.name}:"]
         for task in open_tasks:
-            lines.append(f"  {task.title}")
+            lines.append(f"  {task.title} ({task.file_path.name})")
 
         if len(open_tasks) == limit:
             total_open = len(self.list_tasks(status=TaskStatus.OPEN))
