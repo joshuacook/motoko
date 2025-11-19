@@ -11,6 +11,7 @@ class TaskStatus(Enum):
 
     OPEN = "open"
     COMPLETED = "completed"
+    CANCELLED = "cancelled"
     IN_PROGRESS = "in_progress"
 
 
@@ -27,7 +28,12 @@ class Task:
     @property
     def title(self) -> str:
         """Get formatted task title."""
-        status_prefix = "✓ " if self.status == TaskStatus.COMPLETED else "  "
+        if self.status == TaskStatus.COMPLETED:
+            status_prefix = "✓ "
+        elif self.status == TaskStatus.CANCELLED:
+            status_prefix = "✗ "
+        else:
+            status_prefix = "  "
         return f"{status_prefix}{self.number:06d}: {self.name.replace('-', ' ').title()}"
 
     def __str__(self) -> str:
@@ -60,8 +66,8 @@ class TaskManager:
         Returns:
             Tuple of (number, status, name) or None if invalid
         """
-        # Pattern: 6 digits, optional -COMPLETED-, then name
-        pattern = r"^(\d{6})(?:-COMPLETED)?-(.+)\.md$"
+        # Pattern: 6 digits, optional -COMPLETED- or -CANCELLED-, then name
+        pattern = r"^(\d{6})(?:-(?:COMPLETED|CANCELLED))?-(.+)\.md$"
         match = re.match(pattern, filename)
 
         if not match:
@@ -70,8 +76,13 @@ class TaskManager:
         number = int(match.group(1))
         name = match.group(2)
 
-        # Check if COMPLETED is in the filename
-        status = TaskStatus.COMPLETED if "-COMPLETED-" in filename else TaskStatus.OPEN
+        # Check status from filename
+        if "-COMPLETED-" in filename:
+            status = TaskStatus.COMPLETED
+        elif "-CANCELLED-" in filename:
+            status = TaskStatus.CANCELLED
+        else:
+            status = TaskStatus.OPEN
 
         return number, status, name
 
@@ -223,6 +234,39 @@ class TaskManager:
 
         # Auto-commit the change
         self._auto_commit(new_path, f"Complete task {task.number:06d}: {task.name}")
+
+        return task
+
+    def cancel_task(self, number: int) -> Task | None:
+        """Mark task as cancelled by renaming file.
+
+        Args:
+            number: Task number
+
+        Returns:
+            Updated Task object or None if not found
+        """
+        task = self.get_task(number, load_content=True)
+        if not task:
+            return None
+
+        if task.status == TaskStatus.CANCELLED:
+            # Already cancelled
+            return task
+
+        # Create new filename with CANCELLED
+        new_filename = f"{task.number:06d}-CANCELLED-{task.name}.md"
+        new_path = self.tasks_dir / new_filename
+
+        # Rename file
+        task.file_path.rename(new_path)
+
+        # Update task object
+        task.status = TaskStatus.CANCELLED
+        task.file_path = new_path
+
+        # Auto-commit the change
+        self._auto_commit(new_path, f"Cancel task {task.number:06d}: {task.name}")
 
         return task
 
