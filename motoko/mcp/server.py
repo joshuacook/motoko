@@ -722,19 +722,20 @@ async def _context_validate_relationships() -> dict[str, Any]:
             code = project_file.stem
             existing_projects.add(code)
 
-            # Check if project references a company
+            # Store project frontmatter for later validation
             try:
                 content = project_file.read_text()
                 if content.startswith("---"):
                     parts = content.split("---", 2)
                     if len(parts) >= 3:
                         fm = yaml.safe_load(parts[1])
-                        company_ref = fm.get("company")
-                        if not company_ref:
+                        # Check if project has companies reference (plural, list)
+                        companies_ref = fm.get("companies", [])
+                        if not companies_ref or len(companies_ref) == 0:
                             issues["projects_without_company"].append({
                                 "project": code,
                                 "file": str(project_file.relative_to(ws)),
-                                "suggestion": "Add company reference in frontmatter"
+                                "suggestion": "Add companies reference in frontmatter (as a list)"
                             })
             except Exception:
                 pass
@@ -745,6 +746,30 @@ async def _context_validate_relationships() -> dict[str, Any]:
         for company_file in companies_dir.glob("*.md"):
             code = company_file.stem
             existing_companies.add(code)
+
+    # Validate project company references (second pass now that we know all companies)
+    if projects_dir.exists():
+        for project_file in projects_dir.glob("*.md"):
+            try:
+                content = project_file.read_text()
+                if content.startswith("---"):
+                    parts = content.split("---", 2)
+                    if len(parts) >= 3:
+                        fm = yaml.safe_load(parts[1])
+                        companies_ref = fm.get("companies", [])
+                        if companies_ref:
+                            # Check if any referenced companies don't exist
+                            for company_code in companies_ref:
+                                if company_code not in existing_companies:
+                                    issues["orphaned_projects"].append({
+                                        "project": project_file.stem,
+                                        "file": str(project_file.relative_to(ws)),
+                                        "references_company": company_code,
+                                        "company_exists": False,
+                                        "suggestion": f"Create company {company_code} or update project reference"
+                                    })
+            except Exception:
+                pass
 
     # Check all tasks
     tasks_dir = data_dir / "tasks"
