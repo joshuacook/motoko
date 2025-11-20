@@ -107,6 +107,14 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="context_validate_relationships",
+            description="Detect and report missing/broken entity relationships (task→project→company)",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        Tool(
             name="context_recent",
             description="Show recently modified entities across workspace",
             inputSchema={
@@ -382,6 +390,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await _context_entities(**arguments)
         elif name == "context_validate":
             result = await _context_validate(**arguments)
+        elif name == "context_validate_relationships":
+            result = await _context_validate_relationships(**arguments)
         elif name == "context_recent":
             result = await _context_recent(**arguments)
         elif name == "workspace_init":
@@ -673,6 +683,132 @@ async def _context_validate(fix: bool = False) -> dict[str, Any]:
         "warnings": warnings,
         "fixed": fixed if fix else [],
         "summary": f"{len(errors)} errors, {len(warnings)} warnings" + (f", {len(fixed)} fixed" if fix else "")
+    }
+
+
+async def _context_validate_relationships() -> dict[str, Any]:
+    """Validate entity relationships (task→project→company).
+
+    Detects:
+    - Tasks referencing non-existent projects
+    - Projects referencing non-existent companies
+    - Tasks without project references
+    - Projects without company references
+
+    Returns:
+        Dictionary with detected relationship issues
+    """
+    import yaml
+
+    ws = get_workspace()
+    data_dir = ws / "data"
+
+    issues = {
+        "orphaned_tasks": [],          # Tasks referencing non-existent projects
+        "orphaned_projects": [],       # Projects referencing non-existent companies
+        "tasks_without_project": [],   # Tasks with no project reference
+        "projects_without_company": [], # Projects with no company reference
+        "broken_task_companies": []    # Tasks referencing non-existent companies
+    }
+
+    # Get all existing entities
+    existing_projects = set()
+    existing_companies = set()
+
+    # Load all projects
+    projects_dir = data_dir / "projects"
+    if projects_dir.exists():
+        for project_file in projects_dir.glob("*.md"):
+            code = project_file.stem
+            existing_projects.add(code)
+
+            # Check if project references a company
+            try:
+                content = project_file.read_text()
+                if content.startswith("---"):
+                    parts = content.split("---", 2)
+                    if len(parts) >= 3:
+                        fm = yaml.safe_load(parts[1])
+                        company_ref = fm.get("company")
+                        if not company_ref:
+                            issues["projects_without_company"].append({
+                                "project": code,
+                                "file": str(project_file.relative_to(ws)),
+                                "suggestion": "Add company reference in frontmatter"
+                            })
+            except Exception:
+                pass
+
+    # Load all companies
+    companies_dir = data_dir / "companies"
+    if companies_dir.exists():
+        for company_file in companies_dir.glob("*.md"):
+            code = company_file.stem
+            existing_companies.add(code)
+
+    # Check all tasks
+    tasks_dir = data_dir / "tasks"
+    if tasks_dir.exists():
+        for task_file in tasks_dir.glob("*.md"):
+            try:
+                content = task_file.read_text()
+                if content.startswith("---"):
+                    parts = content.split("---", 2)
+                    if len(parts) >= 3:
+                        fm = yaml.safe_load(parts[1])
+
+                        # Check project reference
+                        project_ref = fm.get("project")
+                        if project_ref:
+                            if project_ref not in existing_projects:
+                                issues["orphaned_tasks"].append({
+                                    "task": task_file.name,
+                                    "file": str(task_file.relative_to(ws)),
+                                    "references_project": project_ref,
+                                    "project_exists": False,
+                                    "suggestion": f"Create project {project_ref} or update task reference"
+                                })
+                        else:
+                            # Task has no project reference
+                            # Extract project code from filename if it follows convention
+                            # Format: 000001-PROJECT-task-name.md
+                            filename_parts = task_file.stem.split("-", 2)
+                            if len(filename_parts) >= 3:
+                                potential_project = filename_parts[1]
+                                if potential_project != "COMPLETED" and potential_project != "CANCELLED":
+                                    issues["tasks_without_project"].append({
+                                        "task": task_file.name,
+                                        "file": str(task_file.relative_to(ws)),
+                                        "potential_project": potential_project,
+                                        "suggestion": f"Add project: {potential_project} to frontmatter"
+                                    })
+
+                        # Check company reference
+                        company_ref = fm.get("company")
+                        if company_ref and company_ref not in existing_companies:
+                            issues["broken_task_companies"].append({
+                                "task": task_file.name,
+                                "file": str(task_file.relative_to(ws)),
+                                "references_company": company_ref,
+                                "company_exists": False,
+                                "suggestion": f"Create company {company_ref} or update task reference"
+                            })
+            except Exception:
+                # Skip files with parse errors
+                continue
+
+    # Count issues
+    total_issues = sum(len(v) for v in issues.values())
+
+    return {
+        "valid": total_issues == 0,
+        "total_issues": total_issues,
+        "issues": issues,
+        "summary": f"Found {total_issues} relationship issues across {len(issues)} categories",
+        "existing_entities": {
+            "projects": len(existing_projects),
+            "companies": len(existing_companies)
+        }
     }
 
 
