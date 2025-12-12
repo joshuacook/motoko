@@ -1,0 +1,21 @@
+[project]
+name = "tachikoma"
+version = "0.2.0"
+description = "Workspace maintenance agent for the Context Lake"
+requires-python = ">=3.11"
+dependencies = [
+    "claude-agent-sdk>=0.1.11",
+    "pyyaml>=6.0",
+    "python-frontmatter>=1.0.0",
+    "anyio>=4.0.0",
+]
+
+[project.scripts]
+tachikoma = "tachikoma.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tachikoma"]

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Workspaces (keep private)
+workspaces/*
+!workspaces/example/
+
+# Local Claude settings
+.claude/settings.local.json
+
+# UV lock files (optional - can include if you want reproducible builds)
+# uv.lock

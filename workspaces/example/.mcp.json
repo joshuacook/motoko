@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "batou": {
+      "command": "uv",
+      "args": ["run", "--directory", "../../../batou", "batou"],
+      "env": {
+        "WORKSPACE_PATH": "."
+      }
+    }
+  }
+}
