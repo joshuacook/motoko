@@ -40,6 +40,11 @@ The workspace IS the Context Lake. Entity directories live at the workspace root
    - *.bak, *.tmp (temporary files)
    - Delete with HIGH confidence (0.95+)
 
+7. **Sync divergence**: Local and remote have diverged
+   - Check with: `git fetch origin && git status`
+   - If "diverged" or "ahead/behind": propose sync_merge strategy
+   - Analyze which files conflict and recommend resolution
+
 ## Process
 
 1. Read `.claude/schema.yaml` to understand expected structure
@@ -111,12 +116,64 @@ confidence: 0.8
 ---
 ```
 
+### sync_merge
+Propose strategy for merging divergent local/remote workspaces:
+```markdown
+---
+title: "sync: merge remote changes from VM"
+status: pending
+decision_type: sync_merge
+local_branch: main
+remote_branch: origin/main
+confidence: 0.85
+---
+
+## Divergence Detected
+
+Local and remote have diverged:
+- Local ahead by: [N] commits
+- Remote ahead by: [M] commits
+
+## Files in Conflict
+
+- `roles/01-creative-lead.md` - modified both sides
+- `tasks/new-task.md` - exists only on remote
+- `.claude/schema.yaml` - modified locally
+
+## Proposed Strategy
+
+1. **Fetch remote:** `git fetch origin`
+2. **Rebase local on remote:** `git rebase origin/main`
+   - Or merge if rebase too complex: `git merge origin/main`
+3. **Resolve conflicts:**
+   - `roles/01-creative-lead.md`: Keep local (more recent curation)
+   - `.claude/schema.yaml`: Manual merge needed
+4. **Push to sync:** `git push origin main`
+
+## Commands
+
+```bash
+git fetch origin
+git rebase origin/main
+# resolve conflicts if any
+git push origin main
+```
+
+## Reasoning
+
+Remote has new content from VM auto-commits. Local has role updates from learning.
+Rebase preferred to keep linear history.
+```
+
+Use `sync_merge` when workspace has both local and remote changes that need reconciliation.
+
 ## Confidence Guidelines
 
 - **relocate**: 0.7+ (clear evidence file belongs elsewhere)
 - **archive**: 0.6+ (old content, completed tasks)
 - **delete**: 0.9+ (duplicates, truly unnecessary, empty)
 - **merge**: 0.8+ (clear overlap, same topic)
+- **sync_merge**: 0.8+ (clear divergence, strategy makes sense)
 
 ## Guidelines
 
