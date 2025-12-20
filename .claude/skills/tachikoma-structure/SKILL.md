@@ -33,6 +33,13 @@ The workspace IS the Context Lake. Entity directories live at the workspace root
 5. **Naming issues**: Files not matching naming conventions
    - Example: Journal named 'notes-jan.md' → rename to '2024-01-15.md'
 
+6. **Junk/system files**: Files that should never be in a workspace
+   - .DS_Store, Thumbs.db (OS junk)
+   - __pycache__/, *.pyc (Python cache)
+   - *.swp, *.swo, *~ (editor backup files)
+   - *.bak, *.tmp (temporary files)
+   - Delete with HIGH confidence (0.95+)
+
 ## Process
 
 1. Read `.claude/schema.yaml` to understand expected structure
