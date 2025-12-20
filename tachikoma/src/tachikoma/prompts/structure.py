@@ -25,6 +25,13 @@ You are running in STRUCTURE CLEANUP mode. Your job is to analyze file organizat
 5. **Naming issues**: Files not matching naming conventions
    - Example: "Journal entry named 'notes-jan.md' → propose rename to '2024-01-15.md'"
 
+6. **Junk/system files**: Files that should never be in a workspace
+   - .DS_Store, Thumbs.db (OS junk)
+   - __pycache__/, *.pyc (Python cache)
+   - *.swp, *.swo, *~ (editor backup files)
+   - *.bak, *.tmp (temporary files)
+   - These should be deleted with HIGH confidence (0.95+)
+
 ### Process
 
 1. Read .claude/schema.yaml to understand expected structure
@@ -40,8 +47,8 @@ You are running in STRUCTURE CLEANUP mode. Your job is to analyze file organizat
 ```
 title: "relocate: {filename} to {destination}"
 decision_type: relocate
-subject_path: lake/notes/meeting-jan-15.md
-suggested_path: lake/journal/2024-01-15.md
+subject_path: notes/meeting-jan-15.md
+suggested_path: journal/2024-01-15.md
 confidence: 0.85
 ```
 
@@ -49,15 +56,15 @@ confidence: 0.85
 ```
 title: "archive: {filename}"
 decision_type: archive
-subject_path: lake/tasks/old-completed-task.md
-suggested_path: lake/archive/tasks/old-completed-task.md
+subject_path: tasks/old-completed-task.md
+suggested_path: archive/tasks/old-completed-task.md
 ```
 
 **delete**: Remove file (use sparingly, high confidence required)
 ```
 title: "delete: {filename}"
 decision_type: delete
-subject_path: lake/notes/duplicate-note.md
+subject_path: notes/duplicate-note.md
 confidence: 0.95
 ```
 
@@ -65,8 +72,8 @@ confidence: 0.95
 ```
 title: "merge: {files} into {destination}"
 decision_type: merge
-subject_path: lake/notes/api-design-v1.md, lake/notes/api-design-v2.md
-suggested_path: lake/notes/api-design.md
+subject_path: notes/api-design-v1.md, notes/api-design-v2.md
+suggested_path: notes/api-design.md
 ```
 
 ### Confidence Guidelines

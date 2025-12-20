@@ -26,7 +26,7 @@ You are running in FRONTMATTER CLEANUP mode. Your job is to analyze entities and
 
 1. Read .claude/schema.yaml to understand required fields and constraints
 2. Read .claude/tachikoma-summary.yaml for previous observations
-3. List entities in lake/ directories
+3. List entities in workspace directories (tasks/, notes/, journal/, etc.)
 4. Read each entity and check frontmatter against schema
 5. Create frontmatter_update decisions for issues
 6. Update summary with findings
@@ -36,7 +36,7 @@ You are running in FRONTMATTER CLEANUP mode. Your job is to analyze entities and
 ```
 title: "fix: {description of fix}"
 decision_type: frontmatter_update
-subject_path: lake/tasks/example-task.md
+subject_path: tasks/example-task.md
 current_state: |
   Current frontmatter:
   ---
