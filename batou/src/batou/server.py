@@ -29,9 +29,18 @@ def get_entity_tools() -> EntityTools:
     """Get or create EntityTools instance."""
     global _entity_tools
     if _entity_tools is None:
-        workspace_path = os.environ.get("WORKSPACE_PATH", os.getcwd())
+        cwd = os.getcwd()
+        env_workspace = os.environ.get("WORKSPACE_PATH")
+        workspace_path = env_workspace or cwd
+
+        logger.info(f"[BATOU] cwd: {cwd}")
+        logger.info(f"[BATOU] WORKSPACE_PATH env: {env_workspace}")
+        logger.info(f"[BATOU] Using workspace: {workspace_path}")
+        logger.info(f"[BATOU] Workspace exists: {Path(workspace_path).exists()}")
+        logger.info(f"[BATOU] Workspace contents: {list(Path(workspace_path).iterdir()) if Path(workspace_path).exists() else 'N/A'}")
+
         _entity_tools = EntityTools(workspace_path)
-        logger.info(f"Initialized EntityTools for workspace: {workspace_path}")
+        logger.info(f"[BATOU] EntityTools initialized")
     return _entity_tools
 
 
@@ -175,6 +184,14 @@ async def list_tools() -> list[Tool]:
                 "properties": {},
             },
         ),
+        Tool(
+            name="debug_info",
+            description="Get debug information about batou's configuration (cwd, workspace path, etc.)",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
     ]
 
 
@@ -241,13 +258,45 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     elif name == "get_schema":
         return tools.get_schema_info()
 
+    elif name == "debug_info":
+        cwd = os.getcwd()
+        env_workspace = os.environ.get("WORKSPACE_PATH")
+        workspace_path = env_workspace or cwd
+        workspace = Path(workspace_path)
+        return {
+            "success": True,
+            "cwd": cwd,
+            "WORKSPACE_PATH_env": env_workspace,
+            "effective_workspace": workspace_path,
+            "workspace_exists": workspace.exists(),
+            "workspace_contents": [p.name for p in workspace.iterdir()] if workspace.exists() else [],
+            "projects_dir_exists": (workspace / "projects").exists(),
+            "projects_count": len(list((workspace / "projects").glob("*.md"))) if (workspace / "projects").exists() else 0,
+        }
+
     else:
         raise ValueError(f"Unknown tool: {name}")
 
 
 def main():
     """Run the MCP server."""
+    import argparse
     import asyncio
+
+    parser = argparse.ArgumentParser(description="Batou MCP server")
+    parser.add_argument("--workspace", help="Workspace path (overrides WORKSPACE_PATH env var)")
+    args = parser.parse_args()
+
+    # If --workspace provided, set it as env var so get_entity_tools() picks it up
+    if args.workspace:
+        # Resolve relative path from original cwd (before uv --directory changed it)
+        # Note: This won't work because cwd is already changed. See below.
+        workspace = Path(args.workspace)
+        if not workspace.is_absolute():
+            # Try to resolve - but cwd is wrong at this point
+            workspace = workspace.resolve()
+        os.environ["WORKSPACE_PATH"] = str(workspace)
+        logger.info(f"[BATOU] --workspace arg set WORKSPACE_PATH to: {workspace}")
 
     async def run():
         async with stdio_server() as (read_stream, write_stream):
