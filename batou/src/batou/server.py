@@ -50,7 +50,7 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="list_entities",
-            description="List entities of a given type with optional filtering. Returns entity IDs, titles, status, and paths.",
+            description="List entities of a given type with optional filtering. Returns entity IDs, titles, status, and paths. By default excludes archived entities.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -60,7 +60,11 @@ async def list_tools() -> list[Tool]:
                     },
                     "status": {
                         "type": "string",
-                        "description": "Filter by status (e.g., 'open', 'done'). Optional.",
+                        "description": "Filter by status (e.g., 'open', 'done', 'archived'). Optional.",
+                    },
+                    "include_archived": {
+                        "type": "boolean",
+                        "description": "Include archived entities (default false). Set true to see all entities including archived.",
                     },
                     "limit": {
                         "type": "integer",
@@ -218,6 +222,7 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return tools.list_entities(
             arguments["entity_type"],
             arguments.get("status"),
+            arguments.get("include_archived", False),
             arguments.get("limit", 50),
         )
 

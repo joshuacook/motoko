@@ -57,13 +57,15 @@ class EntityTools:
         self,
         entity_type: str,
         status: str | None = None,
+        include_archived: bool = False,
         limit: int = 50,
     ) -> dict[str, Any]:
         """List entities of a given type.
 
         Args:
             entity_type: Entity type (e.g., 'tasks', 'notes')
-            status: Optional status filter
+            status: Optional status filter (if set, overrides include_archived)
+            include_archived: If False (default), exclude archived entities
             limit: Maximum number of results
 
         Returns:
@@ -81,16 +83,23 @@ class EntityTools:
 
             try:
                 fm, _ = self._parse_file(path)
+                entity_status = fm.get("status")
 
                 # Apply status filter
-                if status and fm.get("status") != status:
-                    continue
+                if status:
+                    # Explicit status filter - only show matching
+                    if entity_status != status:
+                        continue
+                elif not include_archived:
+                    # Default: exclude archived unless explicitly requested
+                    if entity_status == "archived":
+                        continue
 
                 entities.append({
                     "entity_id": self._entity_id_from_path(path),
                     "entity_type": entity_type,
                     "title": fm.get("title") or fm.get("name") or path.stem,
-                    "status": fm.get("status"),
+                    "status": entity_status,
                     "path": str(path.relative_to(self.workspace_path)),
                     "frontmatter": fm,
                 })
