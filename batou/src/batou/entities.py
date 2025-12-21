@@ -85,14 +85,16 @@ class EntityTools:
                 fm, _ = self._parse_file(path)
                 entity_status = fm.get("status")
 
-                # Apply status filter
+                # Apply status filter (case-insensitive)
                 if status:
                     # Explicit status filter - only show matching
-                    if entity_status != status:
+                    if entity_status and entity_status.lower() != status.lower():
+                        continue
+                    elif not entity_status:
                         continue
                 elif not include_archived:
                     # Default: exclude archived unless explicitly requested
-                    if entity_status == "archived":
+                    if entity_status and entity_status.lower() == "archived":
                         continue
 
                 entities.append({
