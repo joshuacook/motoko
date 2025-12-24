@@ -10,6 +10,8 @@ import frontmatter
 
 from batou.schema import Schema
 
+ARCHIVE_DIR = "zzz_archive"
+
 
 class EntityTools:
     """Structured entity operations on local filesystem."""
@@ -26,6 +28,60 @@ class EntityTools:
     def _entity_id_from_path(self, path: Path) -> str:
         """Extract entity ID from file path."""
         return path.stem  # filename without extension
+
+    def _get_archive_dir(self, entity_type: str) -> Path:
+        """Get the archive directory for an entity type."""
+        return self.schema.get_directory(entity_type) / ARCHIVE_DIR
+
+    def _is_archived_path(self, path: Path) -> bool:
+        """Check if a path is in an archive directory."""
+        return ARCHIVE_DIR in path.parts
+
+    def _find_references(self, entity_type: str, entity_id: str) -> list[dict[str, Any]]:
+        """Find all entities that reference this entity.
+
+        Checks frontmatter fields for references to the entity_id.
+
+        Args:
+            entity_type: Type of the entity being referenced
+            entity_id: ID of the entity being referenced
+
+        Returns:
+            List of referencing entities with their type, id, and field
+        """
+        references = []
+
+        # Determine which directories to search
+        entity_types = set(self.schema.list_entity_types())
+        entity_types.update(["tasks", "notes", "projects", "threads", "journal"])
+
+        for et in entity_types:
+            directory = self.schema.get_directory(et)
+            if not directory.exists():
+                continue
+
+            for path in directory.glob("*.md"):
+                # Skip archived entities
+                if self._is_archived_path(path):
+                    continue
+
+                try:
+                    fm, _ = self._parse_file(path)
+
+                    # Check all frontmatter fields for references
+                    for field, value in fm.items():
+                        if value == entity_id:
+                            references.append({
+                                "entity_type": et,
+                                "entity_id": self._entity_id_from_path(path),
+                                "field": field,
+                                "title": fm.get("title") or fm.get("name") or path.stem,
+                            })
+                            break  # One reference per entity is enough
+                except Exception:
+                    continue
+
+        return references
 
     def _parse_file(self, path: Path) -> tuple[dict[str, Any], str]:
         """Parse a markdown file into frontmatter and content.
@@ -122,6 +178,8 @@ class EntityTools:
     ) -> dict[str, Any]:
         """Get a specific entity by type and ID.
 
+        Checks main directory first, then archive.
+
         Args:
             entity_type: Entity type
             entity_id: Entity ID (filename without extension)
@@ -131,16 +189,23 @@ class EntityTools:
         """
         directory = self.schema.get_directory(entity_type)
         path = directory / f"{entity_id}.md"
+        is_archived = False
 
+        # Check main directory first, then archive
         if not path.exists():
-            return {
-                "success": False,
-                "error": f"Entity not found: {entity_type}/{entity_id}",
-            }
+            archive_path = self._get_archive_dir(entity_type) / f"{entity_id}.md"
+            if archive_path.exists():
+                path = archive_path
+                is_archived = True
+            else:
+                return {
+                    "success": False,
+                    "error": f"Entity not found: {entity_type}/{entity_id}",
+                }
 
         try:
             fm, content = self._parse_file(path)
-            return {
+            result = {
                 "success": True,
                 "entity_type": entity_type,
                 "entity_id": entity_id,
@@ -148,6 +213,9 @@ class EntityTools:
                 "frontmatter": fm,
                 "content": content,
             }
+            if is_archived:
+                result["archived"] = True
+            return result
         except Exception as e:
             return {
                 "success": False,
@@ -304,6 +372,208 @@ class EntityTools:
                 "success": False,
                 "error": f"Failed to delete entity: {e}",
             }
+
+    def archive_entity(
+        self,
+        entity_type: str,
+        entity_id: str,
+    ) -> dict[str, Any]:
+        """Archive an entity by moving it to zzz_archive/.
+
+        Blocks if other entities reference this one.
+
+        Args:
+            entity_type: Entity type
+            entity_id: Entity ID
+
+        Returns:
+            Dict with success status or error with blocking references
+        """
+        directory = self.schema.get_directory(entity_type)
+        path = directory / f"{entity_id}.md"
+
+        if not path.exists():
+            return {
+                "success": False,
+                "error": f"Entity not found: {entity_type}/{entity_id}",
+            }
+
+        # Check for references
+        references = self._find_references(entity_type, entity_id)
+        if references:
+            ref_list = [f"{r['entity_type']}/{r['entity_id']} ({r['field']})" for r in references]
+            return {
+                "success": False,
+                "error": f"Cannot archive: {len(references)} entities reference this entity",
+                "blocking_references": references,
+            }
+
+        # Move to archive
+        archive_dir = self._get_archive_dir(entity_type)
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = archive_dir / f"{entity_id}.md"
+
+        try:
+            path.rename(archive_path)
+            return {
+                "success": True,
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "archived": True,
+                "path": str(archive_path.relative_to(self.workspace_path)),
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to archive entity: {e}",
+            }
+
+    def unarchive_entity(
+        self,
+        entity_type: str,
+        entity_id: str,
+    ) -> dict[str, Any]:
+        """Unarchive an entity by moving it back from zzz_archive/.
+
+        Args:
+            entity_type: Entity type
+            entity_id: Entity ID
+
+        Returns:
+            Dict with success status
+        """
+        archive_dir = self._get_archive_dir(entity_type)
+        archive_path = archive_dir / f"{entity_id}.md"
+
+        if not archive_path.exists():
+            return {
+                "success": False,
+                "error": f"Archived entity not found: {entity_type}/zzz_archive/{entity_id}",
+            }
+
+        # Move back to main directory
+        directory = self.schema.get_directory(entity_type)
+        path = directory / f"{entity_id}.md"
+
+        if path.exists():
+            return {
+                "success": False,
+                "error": f"Entity already exists in main directory: {entity_type}/{entity_id}",
+            }
+
+        try:
+            archive_path.rename(path)
+            return {
+                "success": True,
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "unarchived": True,
+                "path": str(path.relative_to(self.workspace_path)),
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to unarchive entity: {e}",
+            }
+
+    def list_archived_entities(
+        self,
+        entity_type: str,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """List archived entities of a given type.
+
+        Args:
+            entity_type: Entity type
+            limit: Maximum number of results
+
+        Returns:
+            Dict with archived entities list and count
+        """
+        archive_dir = self._get_archive_dir(entity_type)
+
+        if not archive_dir.exists():
+            return {"success": True, "entities": [], "count": 0}
+
+        entities = []
+        for path in sorted(archive_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+            if len(entities) >= limit:
+                break
+
+            try:
+                fm, _ = self._parse_file(path)
+                entities.append({
+                    "entity_id": self._entity_id_from_path(path),
+                    "entity_type": entity_type,
+                    "title": fm.get("title") or fm.get("name") or path.stem,
+                    "path": str(path.relative_to(self.workspace_path)),
+                    "frontmatter": fm,
+                })
+            except Exception:
+                continue
+
+        return {
+            "success": True,
+            "entities": entities,
+            "count": len(entities),
+        }
+
+    def search_archived(
+        self,
+        query: str,
+        entity_type: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Search archived entities by text content.
+
+        Args:
+            query: Search query (case-insensitive substring match)
+            entity_type: Optional entity type filter
+            limit: Maximum results
+
+        Returns:
+            Dict with matching archived entities
+        """
+        query_lower = query.lower()
+        results = []
+
+        # Determine which directories to search
+        if entity_type:
+            archive_dirs = [(entity_type, self._get_archive_dir(entity_type))]
+        else:
+            entity_types = set(self.schema.list_entity_types())
+            entity_types.update(["tasks", "notes", "projects", "threads", "journal"])
+            archive_dirs = [(et, self._get_archive_dir(et)) for et in entity_types]
+
+        for et, archive_dir in archive_dirs:
+            if not archive_dir.exists():
+                continue
+
+            for path in archive_dir.glob("*.md"):
+                if len(results) >= limit:
+                    break
+
+                try:
+                    fm, content = self._parse_file(path)
+                    full_text = f"{fm.get('title', '')} {content}".lower()
+
+                    if query_lower in full_text:
+                        results.append({
+                            "entity_id": self._entity_id_from_path(path),
+                            "entity_type": et,
+                            "title": fm.get("title") or fm.get("name") or path.stem,
+                            "path": str(path.relative_to(self.workspace_path)),
+                            "frontmatter": fm,
+                        })
+                except Exception:
+                    continue
+
+        return {
+            "success": True,
+            "query": query,
+            "results": results,
+            "count": len(results),
+        }
 
     def search_entities(
         self,

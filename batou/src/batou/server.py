@@ -196,6 +196,82 @@ async def list_tools() -> list[Tool]:
                 "properties": {},
             },
         ),
+        Tool(
+            name="archive_entity",
+            description="Archive an entity by moving it to zzz_archive/. Blocks if other active entities reference this one.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity_type": {
+                        "type": "string",
+                        "description": "Entity type",
+                    },
+                    "entity_id": {
+                        "type": "string",
+                        "description": "Entity ID",
+                    },
+                },
+                "required": ["entity_type", "entity_id"],
+            },
+        ),
+        Tool(
+            name="unarchive_entity",
+            description="Unarchive an entity by moving it back from zzz_archive/ to the main directory.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity_type": {
+                        "type": "string",
+                        "description": "Entity type",
+                    },
+                    "entity_id": {
+                        "type": "string",
+                        "description": "Entity ID",
+                    },
+                },
+                "required": ["entity_type", "entity_id"],
+            },
+        ),
+        Tool(
+            name="list_archived_entities",
+            description="List archived entities of a given type from zzz_archive/.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity_type": {
+                        "type": "string",
+                        "description": "Entity type",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results (default 50)",
+                    },
+                },
+                "required": ["entity_type"],
+            },
+        ),
+        Tool(
+            name="search_archived",
+            description="Search archived entities by text content (case-insensitive substring match).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query",
+                    },
+                    "entity_type": {
+                        "type": "string",
+                        "description": "Filter to specific entity type (optional)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default 10)",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
     ]
 
 
@@ -262,6 +338,31 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
     elif name == "get_schema":
         return tools.get_schema_info()
+
+    elif name == "archive_entity":
+        return tools.archive_entity(
+            arguments["entity_type"],
+            arguments["entity_id"],
+        )
+
+    elif name == "unarchive_entity":
+        return tools.unarchive_entity(
+            arguments["entity_type"],
+            arguments["entity_id"],
+        )
+
+    elif name == "list_archived_entities":
+        return tools.list_archived_entities(
+            arguments["entity_type"],
+            arguments.get("limit", 50),
+        )
+
+    elif name == "search_archived":
+        return tools.search_archived(
+            arguments["query"],
+            arguments.get("entity_type"),
+            arguments.get("limit", 10),
+        )
 
     elif name == "debug_info":
         cwd = os.getcwd()
