@@ -169,6 +169,24 @@ Your App → spawns subprocess → Claude Code CLI → streams JSON → Your App
 | Budget | `maxBudgetUsd` | Hard cost limit |
 | Turns | `maxTurns` | Limit conversation depth |
 
+### SDK Investigation Results (2025-12-26)
+
+**Confirmed event types from testing:**
+
+| Event Type | When | Contains |
+|------------|------|----------|
+| `SystemMessage` (subtype: init) | Session start | session_id, tools, mcp_servers, model, permissionMode, agents, skills |
+| `AssistantMessage` | Model response | TextBlock, ToolUseBlock content |
+| `UserMessage` | Tool results | ToolResultBlock content |
+| `ResultMessage` | Session end | success/error, duration_ms, cost, usage, session_id |
+
+**Session management confirmed:**
+- `session_id` returned in SystemMessage init
+- Resume works via `resume=session_id` option
+- Session correctly maintains conversation history
+
+**Test script:** `scripts/sdk_investigation.py`
+
 ### Major Implementation Specification
 
 Based on SDK capabilities, Major should:
@@ -204,17 +222,32 @@ Major (ClaudeSDKClient)
 
 ### Open Questions
 
-1. **Interaction flow (`AskUserQuestion`)** - This tool is **undocumented in the SDK**.
-   - The tool exists and works in Claude Code CLI
-   - No public documentation on mechanism (pause vs events vs async)
-   - Open GitHub issues requesting clarification:
-     - [Issue #10346](https://github.com/anthropics/claude-code/issues/10346)
-     - [Issue #327](https://github.com/anthropics/claude-agent-sdk-python/issues/327)
-   - **Action needed:** Experiment with SDK or request documentation from Anthropic
-   - Questions remain:
-     - How does Major pause?
-     - How does client receive the question?
-     - How does client send the answer back?
+1. **Interaction flow (`AskUserQuestion`)** - Partially investigated.
+
+   **What we learned:**
+   - AskUserQuestion is NOT in the default tools list (confirmed via investigation)
+   - It requires `can_use_tool` callback to handle
+   - `can_use_tool` requires streaming mode (prompt as AsyncIterable)
+   - When Claude uses AskUserQuestion, callback receives questions, returns answers via `updatedInput`
+
+   **How it works (per documentation):**
+   ```python
+   async def can_use_tool_handler(tool_name: str, tool_input: dict) -> dict:
+       if tool_name == "AskUserQuestion":
+           questions = tool_input.get("questions", [])
+           # Get answers from user somehow
+           answers = {"question text": "selected option label"}
+           return {
+               "behavior": "allow",
+               "updatedInput": {"questions": questions, "answers": answers}
+           }
+       return {"behavior": "allow", "updatedInput": tool_input}
+   ```
+
+   **Open issues:**
+   - Streaming mode + can_use_tool causing errors in testing
+   - Need to investigate further or check SDK version compatibility
+   - GitHub issues: [#10346](https://github.com/anthropics/claude-code/issues/10346), [#327](https://github.com/anthropics/claude-agent-sdk-python/issues/327)
 
 2. **Session persistence** - RESOLVED: SDK handles this natively.
    - SDK returns `session_id` in initial system message (type: 'system', subtype: 'init')
