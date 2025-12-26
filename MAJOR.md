@@ -216,13 +216,26 @@ Major (ClaudeSDKClient)
      - How does client receive the question?
      - How does client send the answer back?
 
-2. **Session persistence** - SDK sessions are in-memory:
-   - Claude Code locally writes to `~/.claude` for persistence
-   - For VM deployment, we likely need Firestore but unclear how
-   - Questions remain:
-     - What happens on server restart?
-     - Can SDK sessions be resumed from ID?
-     - What role does Firestore play (log only? cache? recovery?)
+2. **Session persistence** - RESOLVED: SDK handles this natively.
+   - SDK returns `session_id` in initial system message (type: 'system', subtype: 'init')
+   - Sessions can be resumed via `resume=session_id` option
+   - SDK automatically loads full conversation history when resuming
+   - Sessions survive server restarts if session_id is preserved
+   - `fork_session=True` creates a branch without modifying original
+
+   **Firestore's role:** Store `session_id` mapped to conversation. Not full message history.
+
+   ```
+   Client sends message
+       ↓
+   Session API looks up session_id in Firestore
+       ↓
+   Major calls SDK with resume=session_id
+       ↓
+   SDK loads full history automatically
+       ↓
+   Events stream back
+   ```
 
 ---
 
