@@ -228,14 +228,15 @@ SystemMessage (init) → StreamEvent (message_start) → StreamEvent (content_bl
 → StreamEvent (message_delta) → ResultMessage
 ```
 
-**Default tools (SDK 2.0.62):**
+**Default tools (Claude Code CLI 2.0.62):**
 ```
 Task, AgentOutputTool, Bash, Glob, Grep, ExitPlanMode, Read, Edit, Write,
 NotebookEdit, WebFetch, TodoWrite, WebSearch, BashOutput, KillShell, Skill,
 SlashCommand, EnterPlanMode
 ```
 
-**NOT in default tools:** `AskUserQuestion` - must be explicitly provided or enabled.
+**AskUserQuestion:** Not in defaults - must be explicitly added to `tools` list.
+Requires SDK 0.1.18+ (not available in 0.1.14).
 
 **Test script:** `scripts/sdk_investigation.py`
 
@@ -274,44 +275,51 @@ Major (ClaudeSDKClient)
 
 ### Open Questions
 
-1. **Interaction flow (`AskUserQuestion`)** - RESOLVED: Not available in SDK.
+1. **Interaction flow (`AskUserQuestion`)** - RESOLVED: Works in SDK 0.1.18+
 
    **Investigation result (2025-12-26):**
-   - AskUserQuestion is **NOT in the default SDK tools list**
-   - When prompted to use it, agent tried but got: `Error: No such tool available: AskUserQuestion`
-   - This is a Claude Code CLI-specific tool, not part of the Agent SDK
+   - AskUserQuestion was NOT available in SDK 0.1.14 (filtered out)
+   - **SDK 0.1.18+**: Available when explicitly included in `tools` list
+   - Must use `can_use_tool` callback to handle user answers
 
-   **Implication for Major:**
-   - Cannot rely on AskUserQuestion for structured user interaction
-   - Must implement our own interaction pattern:
-     - Agent outputs text questions
-     - Client presents to user
-     - User response sent as next message
-   - OR: Define custom tool with same schema and handle via `can_use_tool` callback
-
-   **Alternative approach:**
+   **Working implementation:**
    ```python
-   # Define custom AskUserQuestion tool
-   custom_tools = [{
-       "name": "AskUser",
-       "description": "Ask user a question with options",
-       "input_schema": {
-           "type": "object",
-           "properties": {
-               "question": {"type": "string"},
-               "options": {"type": "array", "items": {"type": "string"}}
-           }
-       }
-   }]
+   from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+   from claude_agent_sdk.types import PermissionResultAllow
 
-   # Handle in can_use_tool callback
-   async def can_use_tool_handler(tool_name: str, tool_input: dict) -> dict:
-       if tool_name == "AskUser":
-           # Pause and get user input via event relay
-           answer = await get_user_response(tool_input)
-           return {"behavior": "allow", "updatedInput": {"answer": answer}}
-       return {"behavior": "allow", "updatedInput": tool_input}
+   async def can_use_tool_handler(tool_name, tool_input, context=None):
+       if tool_name == 'AskUserQuestion':
+           questions = tool_input.get('questions', [])
+
+           # Collect answers from user (via event relay in Major)
+           answers = {}
+           for q in questions:
+               question_text = q.get('question', '')
+               # Get user's answer somehow
+               answers[question_text] = await get_user_answer(question_text)
+
+           return PermissionResultAllow(
+               updated_input={
+                   'questions': questions,
+                   'answers': answers
+               }
+           )
+       return PermissionResultAllow(updated_input=tool_input)
+
+   options = ClaudeAgentOptions(
+       tools=['AskUserQuestion', 'Bash', 'Read', ...],  # Must explicitly include
+       can_use_tool=can_use_tool_handler,
+   )
    ```
+
+   **Event flow:**
+   1. Agent calls AskUserQuestion tool with structured questions
+   2. SDK invokes `can_use_tool` callback
+   3. Major pauses, emits question event to client
+   4. Client presents UI, user selects answer
+   5. Major receives answer, returns `PermissionResultAllow` with answers
+   6. Agent receives `ToolResultBlock` with user's answers
+   7. Agent continues with knowledge of user's choices
 
 2. **Session persistence** - RESOLVED: SDK handles this natively.
    - SDK returns `session_id` in initial system message (type: 'system', subtype: 'init')

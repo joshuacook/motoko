@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "Workspace maintenance agent for the Context Lake"
 requires-python = ">=3.11"
 dependencies = [
-    "claude-agent-sdk>=0.1.11",
+    "claude-agent-sdk>=0.1.18",
     "pyyaml>=6.0",
     "python-frontmatter>=1.0.0",
     "anyio>=4.0.0",
