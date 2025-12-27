@@ -400,6 +400,46 @@ Major (ClaudeSDKClient)
 - No shared agent code despite similar patterns
 - Race conditions across clients difficult to debug due to scattered concerns
 
+### Bespoke Code Fighting the SDK
+
+The current `agent.py` reimplements things the SDK already handles:
+
+| Bespoke Code | Location | SDK Alternative |
+|--------------|----------|-----------------|
+| Conversation history reconstruction | Lines 67-99, 350-360 | `resume=session_id` loads from JSONL |
+| Delta calculation for streaming | Lines 147, 557-626 | `include_partial_messages=True` gives deltas |
+| Client lifecycle per conversation | Lines 143-144, 313-370 | SDK manages via session files |
+| Accumulated text tracking | Lines 422-423, 574-594 | SDK streams deltas natively |
+
+**History reconstruction** (fighting SDK):
+```python
+conversation_history = firestore.get_messages(conversation_id)
+system_prompt = build_session_system_prompt(attached_entities, conversation_history)
+```
+Rebuilds context from Firestore. With `resume=session_id`, SDK loads from JSONL automatically.
+
+**Delta calculation** (fighting SDK):
+```python
+if full_text.startswith(prev_text):
+    delta = full_text[len(prev_text):]
+```
+SDK with `include_partial_messages=True` already sends `content_block_delta` with actual deltas.
+
+**Client dictionary** (fighting SDK):
+```python
+self.conversation_clients: Dict[str, ClaudeSDKClient] = {}
+```
+Keeping clients alive in memory. With session files, just call SDK fresh each request with `resume=session_id`.
+
+**Should stay (real business logic):**
+- MCP config loading hierarchy (platform/user/workspace)
+- Skills syncing (deployment-specific)
+- Workspace validation (security boundary)
+- System prompt with Context Lake (domain-specific)
+- Tracing integration (infrastructure)
+
+**Simplification:** Replace client lifecycle, history reconstruction, and delta calculation with `resume=session_id` + `include_partial_messages=True`.
+
 ## Proposal: Major Agent
 
 Move the chat agent implementation to motoko as **Major**, consolidating all AI domain concerns in one repo.
@@ -430,17 +470,20 @@ claude-code-apps/
 
 The existing `platform/src/agent.py` (688 lines) has these responsibilities:
 
-| Responsibility | Move to major | Stay in claude-code-apps |
-|----------------|---------------|--------------------------|
-| SDK client management (per-conversation) | Yes | |
-| MCP config loading (platform/user/workspace hierarchy) | Yes | |
-| Skills syncing to workspace | Yes | |
-| Workspace path validation | Yes | |
-| System prompt building (Context Lake + history + attachments) | Yes | |
-| Message streaming + delta calculation | Yes | |
-| Event type conversion (SDK → app events) | Yes | |
-| Firestore reads (get_conversation, get_messages) | | Yes |
-| Langfuse tracing integration | | Yes |
+| Responsibility | Action | Rationale |
+|----------------|--------|-----------|
+| SDK client management (per-conversation) | **Delete** | SDK handles via session files |
+| Conversation history reconstruction | **Delete** | `resume=session_id` loads automatically |
+| Delta calculation for streaming | **Delete** | `include_partial_messages=True` gives deltas |
+| Accumulated text tracking | **Delete** | SDK streams deltas natively |
+| MCP config loading (hierarchy) | Move to Major | Real business logic |
+| Skills syncing to workspace | Move to Major | Deployment-specific |
+| Workspace path validation | Move to Major | Security boundary |
+| System prompt (Context Lake + attachments) | Move to Major | Domain-specific |
+| Event passthrough to clients | Move to Major | Thin, no transformation |
+| Firestore reads (get_conversation) | Stay | Infrastructure |
+| Firestore writes (messages cache) | Stay | Infrastructure |
+| Langfuse tracing integration | Stay | Infrastructure |
 
 ## Major Interface Design
 
