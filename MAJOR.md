@@ -321,25 +321,50 @@ Major (ClaudeSDKClient)
    6. Agent receives `ToolResultBlock` with user's answers
    7. Agent continues with knowledge of user's choices
 
-2. **Session persistence** - RESOLVED: SDK handles this natively.
-   - SDK returns `session_id` in initial system message (type: 'system', subtype: 'init')
-   - Sessions can be resumed via `resume=session_id` option
-   - SDK automatically loads full conversation history when resuming
-   - Sessions survive server restarts if session_id is preserved
-   - `fork_session=True` creates a branch without modifying original
+2. **Session persistence** - RESOLVED: SDK is source of truth.
 
-   **Firestore's role:** Store `session_id` mapped to conversation. Not full message history.
+   **What SDK sessions are:**
+   - Local JSONL files at `~/.claude/projects/<path>/<session_id>.jsonl`
+   - Contains full conversation transcript (messages, tool use, thinking)
+   - Managed entirely by Claude Code CLI
+   - Battle-tested by Anthropic
 
+   **Why SDK sessions, not Firestore:**
+   - Two months of instability with custom Firestore approach
+   - Zero issues with Claude Code's JSONL sessions
+   - SDK handles threading, tool pairing, context continuity, edge cases
+   - Trying to replicate this in Firestore is bespoke code fighting the SDK
+
+   **Architecture decision:**
+   | Concern | Owner | Purpose |
+   |---------|-------|---------|
+   | AI context | SDK session files | **Source of truth** |
+   | Client display | Firestore | Cache for UI rendering |
+
+   **Firestore's role:**
+   - `conversations`: metadata + `sdk_session_id` + streaming state
+   - `messages`: display cache (rebuildable from session files if needed)
+
+   **Durability (single VM with persistent disk):**
+   - `~/.claude/projects/` survives VM restarts
+   - SDK sessions are durable for single-instance deployment
+   - Multi-instance would require session file sync (future problem)
+
+   **Flow:**
    ```
-   Client sends message
+   User sends message
        ↓
-   Session API looks up session_id in Firestore
+   Major looks up sdk_session_id from Firestore conversation
        ↓
-   Major calls SDK with resume=session_id
+   Major calls SDK with resume=sdk_session_id
        ↓
-   SDK loads full history automatically
+   SDK loads history from JSONL (source of truth)
        ↓
-   Events stream back
+   Response streams back
+       ↓
+   Major writes to Firestore messages (cache, fire-and-forget)
+       ↓
+   If Firestore write fails, AI context still intact
    ```
 
 ---
