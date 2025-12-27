@@ -74,10 +74,12 @@ async def streaming_prompt(text: str):
 
 
 async def investigate_ask_user_question():
-    """Test: Trigger AskUserQuestion with canUseTool callback."""
+    """Test: Trigger AskUserQuestion with canUseTool callback using ClaudeSDKClient."""
     print("\n" + "="*80)
-    print("TEST: AskUserQuestion with canUseTool callback")
+    print("TEST: AskUserQuestion with ClaudeSDKClient + can_use_tool")
     print("="*80)
+
+    from claude_agent_sdk import ClaudeSDKClient
 
     options = ClaudeAgentOptions(
         model="claude-sonnet-4-20250514",
@@ -93,29 +95,29 @@ async def investigate_ask_user_question():
 
     Present these as structured questions with options."""
 
-    async for message in query(
-        prompt=streaming_prompt(prompt_text),
-        options=options
-    ):
-        msg_type = type(message).__name__
-        data = {}
+    async with ClaudeSDKClient(options=options) as client:
+        await client.query(prompt_text)
 
-        if hasattr(message, '__dict__'):
-            data = {k: v for k, v in message.__dict__.items() if not k.startswith('_')}
-        if hasattr(message, 'content'):
-            content = message.content
-            if isinstance(content, list):
-                data['content_blocks'] = [
-                    {
-                        'type': type(block).__name__,
-                        'block': str(block)[:300]
-                    }
-                    for block in content
-                ]
-            else:
-                data['content'] = str(content)[:500]
+        async for message in client.receive_response():
+            msg_type = type(message).__name__
+            data = {}
 
-        log_event(msg_type, data)
+            if hasattr(message, '__dict__'):
+                data = {k: v for k, v in message.__dict__.items() if not k.startswith('_')}
+            if hasattr(message, 'content'):
+                content = message.content
+                if isinstance(content, list):
+                    data['content_blocks'] = [
+                        {
+                            'type': type(block).__name__,
+                            'block': str(block)[:300]
+                        }
+                        for block in content
+                    ]
+                else:
+                    data['content'] = str(content)[:500]
+
+            log_event(msg_type, data)
 
 
 async def investigate_partial_messages():

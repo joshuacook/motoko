@@ -228,6 +228,15 @@ SystemMessage (init) → StreamEvent (message_start) → StreamEvent (content_bl
 → StreamEvent (message_delta) → ResultMessage
 ```
 
+**Default tools (SDK 2.0.62):**
+```
+Task, AgentOutputTool, Bash, Glob, Grep, ExitPlanMode, Read, Edit, Write,
+NotebookEdit, WebFetch, TodoWrite, WebSearch, BashOutput, KillShell, Skill,
+SlashCommand, EnterPlanMode
+```
+
+**NOT in default tools:** `AskUserQuestion` - must be explicitly provided or enabled.
+
 **Test script:** `scripts/sdk_investigation.py`
 
 ### Major Implementation Specification
@@ -265,32 +274,44 @@ Major (ClaudeSDKClient)
 
 ### Open Questions
 
-1. **Interaction flow (`AskUserQuestion`)** - Partially investigated.
+1. **Interaction flow (`AskUserQuestion`)** - RESOLVED: Not available in SDK.
 
-   **What we learned:**
-   - AskUserQuestion is NOT in the default tools list (confirmed via investigation)
-   - It requires `can_use_tool` callback to handle
-   - `can_use_tool` requires streaming mode (prompt as AsyncIterable)
-   - When Claude uses AskUserQuestion, callback receives questions, returns answers via `updatedInput`
+   **Investigation result (2025-12-26):**
+   - AskUserQuestion is **NOT in the default SDK tools list**
+   - When prompted to use it, agent tried but got: `Error: No such tool available: AskUserQuestion`
+   - This is a Claude Code CLI-specific tool, not part of the Agent SDK
 
-   **How it works (per documentation):**
+   **Implication for Major:**
+   - Cannot rely on AskUserQuestion for structured user interaction
+   - Must implement our own interaction pattern:
+     - Agent outputs text questions
+     - Client presents to user
+     - User response sent as next message
+   - OR: Define custom tool with same schema and handle via `can_use_tool` callback
+
+   **Alternative approach:**
    ```python
-   async def can_use_tool_handler(tool_name: str, tool_input: dict) -> dict:
-       if tool_name == "AskUserQuestion":
-           questions = tool_input.get("questions", [])
-           # Get answers from user somehow
-           answers = {"question text": "selected option label"}
-           return {
-               "behavior": "allow",
-               "updatedInput": {"questions": questions, "answers": answers}
+   # Define custom AskUserQuestion tool
+   custom_tools = [{
+       "name": "AskUser",
+       "description": "Ask user a question with options",
+       "input_schema": {
+           "type": "object",
+           "properties": {
+               "question": {"type": "string"},
+               "options": {"type": "array", "items": {"type": "string"}}
            }
+       }
+   }]
+
+   # Handle in can_use_tool callback
+   async def can_use_tool_handler(tool_name: str, tool_input: dict) -> dict:
+       if tool_name == "AskUser":
+           # Pause and get user input via event relay
+           answer = await get_user_response(tool_input)
+           return {"behavior": "allow", "updatedInput": {"answer": answer}}
        return {"behavior": "allow", "updatedInput": tool_input}
    ```
-
-   **Open issues:**
-   - Streaming mode + can_use_tool causing errors in testing
-   - Need to investigate further or check SDK version compatibility
-   - GitHub issues: [#10346](https://github.com/anthropics/claude-code/issues/10346), [#327](https://github.com/anthropics/claude-agent-sdk-python/issues/327)
 
 2. **Session persistence** - RESOLVED: SDK handles this natively.
    - SDK returns `session_id` in initial system message (type: 'system', subtype: 'init')
