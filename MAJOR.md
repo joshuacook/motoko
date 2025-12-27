@@ -183,8 +183,16 @@ Message = UserMessage | AssistantMessage | SystemMessage | ResultMessage
 | `UserMessage` | User input, tool results | `content: str \| list[ContentBlock]` |
 | `ResultMessage` | Session end | success/error, duration_ms, duration_api_ms, cost, usage, session_id, result |
 
-**Additional Streaming Type:**
-- Enable with `include_partial_messages=True` in ClaudeAgentOptions
+**Streaming Type (enable with `include_partial_messages=True`):**
+
+`StreamEvent` - Contains raw streaming events:
+| Event Type | What |
+|------------|------|
+| `message_start` | Beginning of message with model info, initial usage |
+| `content_block_start` | Start of content block |
+| `content_block_delta` | Incremental updates (text_delta, tool_use_delta) |
+| `content_block_stop` | End of content block |
+| `message_delta` | Stop reason, final usage |
 
 **Content Block Types:**
 ```python
@@ -211,6 +219,14 @@ Note: Python SDK doesn't support `SessionStart`, `SessionEnd`, `Notification`, `
 - Session correctly maintains conversation history (remembered "42")
 - Tool use appears as `ToolUseBlock` in AssistantMessage
 - Tool results appear as `ToolResultBlock` in UserMessage
+- `StreamEvent` with `include_partial_messages=True` provides real-time text deltas
+
+**Event sequence observed (streaming):**
+```
+SystemMessage (init) → StreamEvent (message_start) → StreamEvent (content_block_start)
+→ StreamEvent (content_block_delta)* → AssistantMessage → StreamEvent (content_block_stop)
+→ StreamEvent (message_delta) → ResultMessage
+```
 
 **Test script:** `scripts/sdk_investigation.py`
 
