@@ -169,21 +169,48 @@ Your App → spawns subprocess → Claude Code CLI → streams JSON → Your App
 | Budget | `maxBudgetUsd` | Hard cost limit |
 | Turns | `maxTurns` | Limit conversation depth |
 
+### SDK Message Types (Official Documentation)
+
+**Base Message Types:**
+```python
+Message = UserMessage | AssistantMessage | SystemMessage | ResultMessage
+```
+
+| Message Type | When | Contains |
+|--------------|------|----------|
+| `SystemMessage` | Session start, compaction | `subtype` (init, compact_boundary), `data` dict with session_id, tools, model, etc. |
+| `AssistantMessage` | Model response | `content: list[ContentBlock]`, `model` |
+| `UserMessage` | User input, tool results | `content: str \| list[ContentBlock]` |
+| `ResultMessage` | Session end | success/error, duration_ms, duration_api_ms, cost, usage, session_id, result |
+
+**Additional Streaming Type:**
+- Enable with `include_partial_messages=True` in ClaudeAgentOptions
+
+**Content Block Types:**
+```python
+ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock
+```
+
+**Hook Events (Python SDK):**
+- `PreToolUse` - Before tool execution
+- `PostToolUse` - After tool execution
+- `UserPromptSubmit` - When user submits prompt
+- `Stop` - When stopping execution
+- `SubagentStop` - When subagent completes
+- `PreCompact` - Before message compaction
+
+Note: Python SDK doesn't support `SessionStart`, `SessionEnd`, `Notification`, `PostToolUseFailure`, `PermissionRequest` (TypeScript only).
+
+**Source:** [Agent SDK reference - Python](https://platform.claude.com/docs/en/agent-sdk/python)
+
 ### SDK Investigation Results (2025-12-26)
 
-**Confirmed event types from testing:**
-
-| Event Type | When | Contains |
-|------------|------|----------|
-| `SystemMessage` (subtype: init) | Session start | session_id, tools, mcp_servers, model, permissionMode, agents, skills |
-| `AssistantMessage` | Model response | TextBlock, ToolUseBlock content |
-| `UserMessage` | Tool results | ToolResultBlock content |
-| `ResultMessage` | Session end | success/error, duration_ms, cost, usage, session_id |
-
-**Session management confirmed:**
-- `session_id` returned in SystemMessage init
+**Confirmed from testing:**
+- `session_id` in SystemMessage init data
 - Resume works via `resume=session_id` option
-- Session correctly maintains conversation history
+- Session correctly maintains conversation history (remembered "42")
+- Tool use appears as `ToolUseBlock` in AssistantMessage
+- Tool results appear as `ToolResultBlock` in UserMessage
 
 **Test script:** `scripts/sdk_investigation.py`
 
