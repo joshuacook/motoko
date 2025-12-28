@@ -614,19 +614,153 @@ The base prompt (CONTEXT_LAKE_SYSTEM_PROMPT) explains:
 
 Major syncs skills from platform/user levels to workspace `.claude/skills/` directory so the SDK can discover them. Workspace-level skills take precedence.
 
+## Resolved Questions
+
+1. **Session persistence**: RESOLVED - SDK JSONL files are source of truth. Use `resume=session_id`.
+
+2. **Delta calculation**: RESOLVED - SDK handles with `include_partial_messages=True`. Delete bespoke code.
+
+3. **Rate limiting**: Stay in claude-code-apps (infrastructure concern).
+
+4. **Tracing hooks**: Stay in claude-code-apps (infrastructure concern).
+
 ## Open Questions
 
-1. **Session persistence**: Should Major persist sessions to disk, or is in-memory sufficient with claude-code-apps handling restoration via conversation_history?
+1. **MCP config paths**: Hardcoded `/opt/` paths work for deployment but not local dev. Major should accept config paths as parameters.
 
-2. **MCP config paths**: Hardcoded `/opt/` paths work for deployment but not local dev. Should Major accept config paths as parameters?
+2. **Workspace validation**: Currently validates paths are under `/opt/workspaces/`. Should be configurable via parameter.
 
-3. **Workspace validation**: Currently validates paths are under `/opt/workspaces/`. Should this be configurable?
+3. **Deployment model**: How does claude-code-apps consume Major?
+   - Option A: Install as Python package from motoko repo
+   - Option B: Major as subprocess
+   - Option C: Major as separate service
 
-4. **Delta calculation**: Major calculates text deltas (SDK sends accumulated text). Should this be Major's responsibility or claude-code-apps'?
+---
 
-5. **Rate limiting**: Current implementation updates Firestore every 0.5s to avoid rate limits. This logic should stay in claude-code-apps, not Major.
+## Implementation Plan
 
-6. **Tracing hooks**: Should Major emit more granular events for tracing (generation start/end, spans), or just the core events above?
+### Phase 1: Create Major Package
+
+```
+motoko/
+├── major/
+│   ├── pyproject.toml
+│   ├── src/
+│   │   └── major/
+│   │       ├── __init__.py
+│   │       ├── agent.py      # Core agent logic
+│   │       ├── config.py     # MCP loading, workspace validation
+│   │       └── prompt.py     # System prompt building
+```
+
+**agent.py core:**
+```python
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+from claude_agent_sdk.types import PermissionResultAllow
+
+class MajorAgent:
+    def __init__(self, config: MajorConfig):
+        self.config = config
+
+    async def send_message(
+        self,
+        message: str,
+        session_id: str | None,
+        workspace_path: str,
+        attached_entities: list[dict] | None = None,
+    ) -> AsyncGenerator[SDKEvent, None]:
+        """Send message and yield raw SDK events."""
+
+        options = ClaudeAgentOptions(
+            cwd=workspace_path,
+            resume=session_id,  # SDK loads history from JSONL
+            system_prompt=build_system_prompt(attached_entities),
+            mcp_servers=self.config.load_mcp_servers(workspace_path),
+            tools=['AskUserQuestion', ...],
+            can_use_tool=self._handle_tool_permission,
+            include_partial_messages=True,  # SDK sends deltas
+            permission_mode='bypassPermissions',
+        )
+
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(message)
+            async for msg in client.receive_response():
+                yield msg  # Pass through raw SDK events
+```
+
+### Phase 2: Update claude-code-apps
+
+**Firestore schema change:**
+```python
+# Add to conversations collection
+"sdk_session_id": str | None  # Set after first message
+```
+
+**Simplified agent.py:**
+```python
+from major import MajorAgent
+
+agent = MajorAgent(config)
+
+async def send_message(conversation_id: str, message: str):
+    conv = firestore.get_conversation(conversation_id)
+
+    async for event in agent.send_message(
+        message=message,
+        session_id=conv.get('sdk_session_id'),
+        workspace_path=conv['workspace_path'],
+        attached_entities=conv.get('attached_entities'),
+    ):
+        # Extract session_id from init event
+        if is_init_event(event):
+            firestore.update_conversation(conversation_id, {
+                'sdk_session_id': event.data['session_id']
+            })
+
+        # Write to Firestore as cache (fire-and-forget)
+        firestore.cache_event(conversation_id, event)
+
+        # Yield to client
+        yield event
+```
+
+### Phase 3: AskUserQuestion Flow
+
+```
+1. SDK invokes can_use_tool('AskUserQuestion', questions)
+2. Major yields AskUserQuestion event to client
+3. Client displays UI, user answers
+4. Client sends answer back to API
+5. API calls Major.submit_answer(session_id, answers)
+6. Major returns PermissionResultAllow with answers
+7. SDK continues
+```
+
+**Requires:** Async answer collection mechanism (websocket or polling).
+
+### Phase 4: Cleanup
+
+1. Delete from agent.py:
+   - `conversation_clients` dict
+   - `accumulated_text` tracking
+   - `build_conversation_history_prompt()`
+   - Delta calculation in `_convert_message()`
+
+2. Delete from firestore.py:
+   - Nothing deleted, but `messages` collection becomes cache-only
+
+3. Update SDK version:
+   - Ensure `claude-agent-sdk>=0.1.18` in both repos
+
+### Deployment
+
+**Option A (recommended for single VM):**
+```bash
+# In claude-code-apps
+pip install -e /opt/motoko/major
+```
+
+Major is editable install from motoko. Changes to motoko/major immediately available.
 
 ## Race Condition Investigation
 
