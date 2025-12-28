@@ -2,5 +2,13 @@
 
 from .agent import MajorAgent
 from .config import MajorConfig
+from .sessions import SessionManager, SessionMetadata, SessionMessage, session_manager
 
-__all__ = ["MajorAgent", "MajorConfig"]
+__all__ = [
+    "MajorAgent",
+    "MajorConfig",
+    "SessionManager",
+    "SessionMetadata",
+    "SessionMessage",
+    "session_manager",
+]
