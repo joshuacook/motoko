@@ -99,10 +99,19 @@ class SessionManager:
         session_ids = set()
         if sdk_dir.exists():
             for jsonl_file in sdk_dir.glob("*.jsonl"):
+                # Skip agent sidechain sessions (agent-*)
+                if jsonl_file.stem.startswith('agent-'):
+                    continue
+                # Skip empty files
+                if jsonl_file.stat().st_size == 0:
+                    continue
                 session_ids.add(jsonl_file.stem)
 
         # Also include any sessions in metadata (in case JSONL was deleted)
-        session_ids.update(metadata.keys())
+        # But filter out agent- prefixed ones
+        for sid in metadata.keys():
+            if not sid.startswith('agent-'):
+                session_ids.add(sid)
 
         for session_id in session_ids:
             meta = metadata.get(session_id, {})
