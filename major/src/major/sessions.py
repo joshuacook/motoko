@@ -230,54 +230,65 @@ class SessionManager:
 
                     msg_type = entry.get('type')
                     message = entry.get('message', {})
-                    content_blocks = message.get('content', [])
+                    content = message.get('content', [])
 
-                    if msg_type == 'human':
-                        # Extract user text
-                        text_parts = []
-                        for block in content_blocks:
-                            if isinstance(block, dict) and block.get('type') == 'text':
-                                text_parts.append(block.get('text', ''))
-                            elif isinstance(block, str):
-                                text_parts.append(block)
+                    # Handle user messages (SDK uses "user", older format used "human")
+                    if msg_type in ('human', 'user'):
+                        # Content can be a string or array of blocks
+                        if isinstance(content, str):
+                            if content.strip():
+                                messages.append(SessionMessage(
+                                    role='user',
+                                    content=content,
+                                ))
+                        else:
+                            # Array of content blocks
+                            text_parts = []
+                            for block in content:
+                                if isinstance(block, dict) and block.get('type') == 'text':
+                                    text_parts.append(block.get('text', ''))
+                                elif isinstance(block, str):
+                                    text_parts.append(block)
 
-                        if text_parts:
-                            messages.append(SessionMessage(
-                                role='user',
-                                content='\n'.join(text_parts),
-                            ))
+                            if text_parts:
+                                messages.append(SessionMessage(
+                                    role='user',
+                                    content='\n'.join(text_parts),
+                                ))
 
                     elif msg_type == 'assistant':
                         # Extract assistant response and tool use
                         text_parts = []
 
-                        for block in content_blocks:
-                            if isinstance(block, dict):
-                                block_type = block.get('type')
+                        # Content can be array of blocks
+                        if isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict):
+                                    block_type = block.get('type')
 
-                                if block_type == 'text':
-                                    text_parts.append(block.get('text', ''))
+                                    if block_type == 'text':
+                                        text_parts.append(block.get('text', ''))
 
-                                elif block_type == 'tool_use':
-                                    # Add tool use as separate message
-                                    messages.append(SessionMessage(
-                                        role='tool_use',
-                                        content=json.dumps(block.get('input', {})),
-                                        tool_name=block.get('name'),
-                                    ))
+                                    elif block_type == 'tool_use':
+                                        # Add tool use as separate message
+                                        messages.append(SessionMessage(
+                                            role='tool_use',
+                                            content=json.dumps(block.get('input', {})),
+                                            tool_name=block.get('name'),
+                                        ))
 
-                                elif block_type == 'tool_result':
-                                    # Tool result
-                                    result_content = block.get('content', '')
-                                    if isinstance(result_content, list):
-                                        result_content = '\n'.join(
-                                            b.get('text', str(b)) if isinstance(b, dict) else str(b)
-                                            for b in result_content
-                                        )
-                                    messages.append(SessionMessage(
-                                        role='tool_result',
-                                        content=str(result_content)[:1000],  # Truncate
-                                    ))
+                                    elif block_type == 'tool_result':
+                                        # Tool result
+                                        result_content = block.get('content', '')
+                                        if isinstance(result_content, list):
+                                            result_content = '\n'.join(
+                                                b.get('text', str(b)) if isinstance(b, dict) else str(b)
+                                                for b in result_content
+                                            )
+                                        messages.append(SessionMessage(
+                                            role='tool_result',
+                                            content=str(result_content)[:1000],  # Truncate
+                                        ))
 
                         if text_parts:
                             messages.append(SessionMessage(
