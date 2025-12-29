@@ -63,8 +63,8 @@ class SessionManager:
         The workspace path is encoded (/ -> -)
         """
         # Encode workspace path for SDK directory structure
-        # /opt/workspaces/josh/main -> opt-workspaces-josh-main
-        encoded_path = workspace_path.lstrip('/').replace('/', '-')
+        # /opt/workspaces/josh/main -> -opt-workspaces-josh-main
+        encoded_path = workspace_path.replace('/', '-')
         return Path.home() / ".claude" / "projects" / encoded_path
 
     def _load_metadata(self, workspace_path: str) -> dict[str, dict]:
