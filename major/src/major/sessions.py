@@ -60,11 +60,12 @@ class SessionManager:
         """Get SDK sessions directory for a workspace.
 
         SDK stores sessions at: ~/.claude/projects/{workspace_path_encoded}/
-        The workspace path is encoded (/ -> -)
+        The workspace path is encoded (/ -> -, _ -> -)
         """
         # Encode workspace path for SDK directory structure
         # /opt/workspaces/josh/main -> -opt-workspaces-josh-main
-        encoded_path = workspace_path.replace('/', '-')
+        # /opt/workspaces/user_123/main -> -opt-workspaces-user-123-main
+        encoded_path = workspace_path.replace('/', '-').replace('_', '-')
         return Path.home() / ".claude" / "projects" / encoded_path
 
     def _load_metadata(self, workspace_path: str) -> dict[str, dict]:
