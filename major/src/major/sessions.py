@@ -242,6 +242,10 @@ class SessionManager:
                     message = entry.get('message', {})
                     content = message.get('content', [])
 
+                    # Skip meta messages (skill prompts, system injections)
+                    if entry.get('isMeta'):
+                        continue
+
                     # Handle user messages (SDK uses "user", older format used "human")
                     if msg_type in ('human', 'user'):
                         # Content can be a string or array of blocks
