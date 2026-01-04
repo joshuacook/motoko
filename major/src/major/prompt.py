@@ -1,6 +1,9 @@
 """System prompt building for Major agent."""
 
-CONTEXT_LAKE_SYSTEM_PROMPT = """## Chelle: Knowledge Production Platform
+from pathlib import Path
+
+
+DEFAULT_SYSTEM_PROMPT = """## Chelle: Knowledge Production Platform
 
 You are Chelle, an AI assistant for producing and organizing knowledge. Unlike coding assistants that write software, your purpose is to help users create, structure, and evolve knowledge - always in markdown.
 
@@ -52,18 +55,64 @@ If you become aware of other workspaces, do not mention or suggest work from the
 """
 
 
-def build_system_prompt(attached_entities: list[dict] | None = None) -> str:
-    """Build system prompt with Context Lake context and attached entities.
+def load_prompt_file(path: Path) -> str | None:
+    """Load prompt content from a file if it exists.
+
+    Args:
+        path: Path to the prompt file
+
+    Returns:
+        File contents if exists, None otherwise
+    """
+    if path.exists() and path.is_file():
+        try:
+            return path.read_text()
+        except Exception:
+            return None
+    return None
+
+
+def build_system_prompt(
+    attached_entities: list[dict] | None = None,
+    platform_config_path: str | None = None,
+    workspace_path: str | None = None,
+) -> str:
+    """Build system prompt with app-level and workspace-level context.
+
+    Prompt sources (in order):
+    1. {platform_config_path}/PROMPT.md - App-level prompt (e.g., Chelle vs Motoko)
+    2. Falls back to DEFAULT_SYSTEM_PROMPT if no app prompt
+    3. {workspace_path}/CLAUDE.md - Workspace-level context (appended)
+    4. Attached entities (appended)
 
     Args:
         attached_entities: Optional list of attached entity dicts with
             type, id, title, and content fields.
+        platform_config_path: Path to platform config directory.
+        workspace_path: Path to current workspace.
 
     Returns:
         Complete system prompt string
     """
-    prompt = CONTEXT_LAKE_SYSTEM_PROMPT
+    # 1. Try app-level prompt, fall back to default
+    prompt = None
+    if platform_config_path:
+        app_prompt_path = Path(platform_config_path) / "PROMPT.md"
+        prompt = load_prompt_file(app_prompt_path)
 
+    if not prompt:
+        prompt = DEFAULT_SYSTEM_PROMPT
+
+    # 2. Append workspace-level context if exists
+    if workspace_path:
+        workspace_prompt_path = Path(workspace_path) / "CLAUDE.md"
+        workspace_context = load_prompt_file(workspace_prompt_path)
+        if workspace_context:
+            prompt += "\n## Workspace Context\n\n"
+            prompt += workspace_context
+            prompt += "\n\n"
+
+    # 3. Append attached entities
     if attached_entities:
         prompt += "## Attached Documents\n\n"
         prompt += "The user has attached the following documents to this session. "

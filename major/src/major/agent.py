@@ -87,8 +87,12 @@ class MajorAgent:
         # Load MCP servers
         mcp_servers = self.config.load_mcp_servers(workspace)
 
-        # Build system prompt
-        system_prompt = build_system_prompt(attached_entities)
+        # Build system prompt with app and workspace context
+        system_prompt = build_system_prompt(
+            attached_entities=attached_entities,
+            platform_config_path=self.config.platform_config_path,
+            workspace_path=workspace,
+        )
 
         # Build tool list
         tools = ['AskUserQuestion'] if on_ask_user else None
