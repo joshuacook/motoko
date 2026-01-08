@@ -62,6 +62,7 @@ class MajorAgent:
         session_id: str | None = None,
         attached_entities: list[dict] | None = None,
         on_ask_user: Callable[[AskUserQuestionEvent], Awaitable[dict[str, str]]] | None = None,
+        user_context: dict[str, str] | None = None,
     ) -> AsyncGenerator[SDKMessage, None]:
         """Send a message and yield SDK events.
 
@@ -73,6 +74,8 @@ class MajorAgent:
             on_ask_user: Optional async callback for AskUserQuestion. If provided,
                         will be called when agent asks a question and should return
                         answers as {question_text: answer}.
+            user_context: Optional user context dict to inject into MCP servers.
+                         Keys like 'clerk_id' become env vars like CLERK_ID.
 
         Yields:
             Raw SDK messages (SystemMessage, AssistantMessage, UserMessage,
@@ -84,8 +87,8 @@ class MajorAgent:
         # Sync skills from platform/user to workspace
         self.config.sync_skills(workspace)
 
-        # Load MCP servers
-        mcp_servers = self.config.load_mcp_servers(workspace)
+        # Load MCP servers with user context
+        mcp_servers = self.config.load_mcp_servers(workspace, user_context=user_context)
 
         # Build system prompt with app and workspace context
         system_prompt = build_system_prompt(

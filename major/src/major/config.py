@@ -48,7 +48,11 @@ class MajorConfig:
 
         return workspace_path
 
-    def load_mcp_servers(self, workspace_path: str) -> dict[str, Any]:
+    def load_mcp_servers(
+        self,
+        workspace_path: str,
+        user_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Load and merge MCP configs from platform, user, and workspace levels.
 
         Hierarchy (later overrides earlier):
@@ -58,6 +62,8 @@ class MajorConfig:
 
         Args:
             workspace_path: Path to workspace
+            user_context: Optional user context to inject into MCP env vars.
+                         Keys like 'clerk_id' are injected as CLERK_ID env var.
 
         Returns:
             Merged MCP server configurations
@@ -86,6 +92,14 @@ class MajorConfig:
             if "env" not in merged_servers["batou"]:
                 merged_servers["batou"]["env"] = {}
             merged_servers["batou"]["env"]["WORKSPACE_PATH"] = workspace_path
+
+        # Inject user context as env vars for MCP servers that need it
+        if user_context:
+            # chelle-api needs ORGANIZATION_ID (from clerk_id)
+            if "chelle-api" in merged_servers and user_context.get("clerk_id"):
+                if "env" not in merged_servers["chelle-api"]:
+                    merged_servers["chelle-api"]["env"] = {}
+                merged_servers["chelle-api"]["env"]["ORGANIZATION_ID"] = user_context["clerk_id"]
 
         return merged_servers
 
