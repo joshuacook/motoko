@@ -100,7 +100,9 @@ class MajorConfig:
                 if "env" not in merged_servers["chelle-api"]:
                     merged_servers["chelle-api"]["env"] = {}
                 merged_servers["chelle-api"]["env"]["ORGANIZATION_ID"] = user_context["clerk_id"]
+                print(f"[DEBUG] Injected ORGANIZATION_ID={user_context['clerk_id']} into chelle-api MCP")
 
+        print(f"[DEBUG] load_mcp_servers: user_context={user_context}, servers={list(merged_servers.keys())}")
         return merged_servers
 
     def sync_skills(self, workspace_path: str) -> None:
