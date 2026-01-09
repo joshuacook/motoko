@@ -5,8 +5,11 @@ Major is a thin wrapper around the Claude Agent SDK that:
 - Passes through SDK events with minimal transformation
 - Handles AskUserQuestion via can_use_tool callback
 - Manages MCP server configuration and skills syncing
+- Supports multimodal messages with images
 """
 
+import base64
+import httpx
 from collections.abc import AsyncGenerator, Callable, Awaitable
 from dataclasses import dataclass
 from typing import Any
@@ -16,6 +19,26 @@ from claude_agent_sdk.types import PermissionResultAllow
 
 from .config import MajorConfig
 from .prompt import build_system_prompt
+
+
+async def fetch_image_as_base64(url: str) -> tuple[str, str]:
+    """Fetch an image from URL and return (base64_data, media_type)."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, follow_redirects=True)
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "image/jpeg")
+        # Normalize content type
+        if "jpeg" in content_type or "jpg" in content_type:
+            media_type = "image/jpeg"
+        elif "png" in content_type:
+            media_type = "image/png"
+        elif "gif" in content_type:
+            media_type = "image/gif"
+        elif "webp" in content_type:
+            media_type = "image/webp"
+        else:
+            media_type = "image/jpeg"  # Default
+        return base64.b64encode(response.content).decode("utf-8"), media_type
 
 
 @dataclass
@@ -63,6 +86,7 @@ class MajorAgent:
         attached_entities: list[dict] | None = None,
         on_ask_user: Callable[[AskUserQuestionEvent], Awaitable[dict[str, str]]] | None = None,
         user_context: dict[str, str] | None = None,
+        image_urls: list[str] | None = None,
     ) -> AsyncGenerator[SDKMessage, None]:
         """Send a message and yield SDK events.
 
@@ -76,6 +100,7 @@ class MajorAgent:
                         answers as {question_text: answer}.
             user_context: Optional user context dict to inject into MCP servers.
                          Keys like 'clerk_id' become env vars like CLERK_ID.
+            image_urls: Optional list of image URLs to include in the message.
 
         Yields:
             Raw SDK messages (SystemMessage, AssistantMessage, UserMessage,
@@ -143,9 +168,32 @@ class MajorAgent:
             setting_sources=["project"],  # Load skills from .claude/skills/
         )
 
+        # Build message content (text or multimodal)
+        if image_urls:
+            # Construct multimodal content blocks
+            content = []
+            for url in image_urls:
+                try:
+                    base64_data, media_type = await fetch_image_as_base64(url)
+                    content.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": base64_data,
+                        }
+                    })
+                except Exception as e:
+                    print(f"[Major] Failed to fetch image {url}: {e}")
+            # Add text message last
+            content.append({"type": "text", "text": message})
+            query_message = content
+        else:
+            query_message = message
+
         # Run query and yield events
         async with ClaudeSDKClient(options=options) as client:
-            await client.query(message)
+            await client.query(query_message)
 
             async for msg in client.receive_response():
                 yield msg
