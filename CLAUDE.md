@@ -108,6 +108,27 @@ Edit the markdown file directly. Preserve existing frontmatter fields.
 4. **Be lenient on read** - Handle missing/invalid frontmatter gracefully
 5. **Respect decisions** - Don't modify `decisions/` (Tachikoma's domain)
 
+## Entity Context Messages
+
+When users interact through the sidebar interface with an entity selected, their messages include contextual information:
+
+```
+[Regarding {type}/{id}: "{title}"]
+
+File content:
+```
+{entity content}
+```
+
+User request: {their question or task}
+```
+
+When you see this pattern:
+- The entity type and ID tell you which file is being discussed (e.g., `songs/everything`)
+- The file content is provided so you can analyze or work with it directly
+- Focus your response on the specific entity and the user's request
+- If asked to modify the entity, update the file at `{type}/{id}.md`
+
 ## Roles
 
 If there's a `roles/` directory, it contains persona definitions. The user may ask you to "be" a role - read the role file and adopt its perspective.
