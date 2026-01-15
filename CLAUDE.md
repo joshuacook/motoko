@@ -110,22 +110,17 @@ Edit the markdown file directly. Preserve existing frontmatter fields.
 
 ## Entity Context Messages
 
-When users interact through the sidebar interface with an entity selected, their messages include contextual information:
+When users interact through the sidebar interface with an entity selected, their messages include a reference:
 
 ```
 [Regarding {type}/{id}: "{title}"]
-
-File content:
-```
-{entity content}
-```
 
 User request: {their question or task}
 ```
 
 When you see this pattern:
-- The entity type and ID tell you which file is being discussed (e.g., `songs/everything`)
-- The file content is provided so you can analyze or work with it directly
+- The entity type and ID identify the file at `{type}/{id}.md`
+- **Read the file** using the Read tool to see its content
 - Focus your response on the specific entity and the user's request
 - If asked to modify the entity, update the file at `{type}/{id}.md`
 
