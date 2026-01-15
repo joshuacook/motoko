@@ -155,18 +155,21 @@ class MajorAgent:
             can_use_tool = handle_tool_permission
 
         # Configure SDK options
-        options = ClaudeAgentOptions(
-            cwd=workspace,
-            model=self.model,
-            resume=session_id,  # SDK loads history from JSONL
-            system_prompt=system_prompt,
-            mcp_servers=mcp_servers if mcp_servers else None,
-            tools=tools,
-            can_use_tool=can_use_tool,
-            include_partial_messages=True,  # SDK sends deltas
-            permission_mode='bypassPermissions',
-            setting_sources=["project"],  # Load skills from .claude/skills/
-        )
+        # Note: Only pass tools if explicitly set - None disables all tools
+        options_kwargs = {
+            "cwd": workspace,
+            "model": self.model,
+            "resume": session_id,  # SDK loads history from JSONL
+            "system_prompt": system_prompt,
+            "mcp_servers": mcp_servers if mcp_servers else None,
+            "can_use_tool": can_use_tool,
+            "include_partial_messages": True,  # SDK sends deltas
+            "permission_mode": 'bypassPermissions',
+            "setting_sources": ["project"],  # Load skills from .claude/skills/
+        }
+        if tools is not None:
+            options_kwargs["tools"] = tools
+        options = ClaudeAgentOptions(**options_kwargs)
 
         # Build message content (text or multimodal)
         if image_urls:
