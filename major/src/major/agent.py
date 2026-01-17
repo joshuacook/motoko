@@ -19,6 +19,7 @@ from claude_agent_sdk.types import PermissionResultAllow
 
 from .config import MajorConfig
 from .prompt import build_system_prompt
+from .tools import create_major_tools
 
 
 async def fetch_image_as_base64(url: str) -> tuple[str, str]:
@@ -114,6 +115,12 @@ class MajorAgent:
 
         # Load MCP servers with user context
         mcp_servers = self.config.load_mcp_servers(workspace, user_context=user_context)
+
+        # Add major-tools (custom tools for report generation, etc.)
+        major_tools = create_major_tools(workspace)
+        if mcp_servers is None:
+            mcp_servers = {}
+        mcp_servers["major-tools"] = major_tools
 
         # Build system prompt with app and workspace context
         system_prompt = build_system_prompt(

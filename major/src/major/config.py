@@ -87,11 +87,12 @@ class MajorConfig:
                 except Exception:
                     pass  # Skip invalid configs
 
-        # Inject WORKSPACE_PATH for batou MCP server
-        if "batou" in merged_servers:
-            if "env" not in merged_servers["batou"]:
-                merged_servers["batou"]["env"] = {}
-            merged_servers["batou"]["env"]["WORKSPACE_PATH"] = workspace_path
+        # Inject WORKSPACE_PATH for MCP servers that need it
+        for server_name in ["batou", "reports"]:
+            if server_name in merged_servers:
+                if "env" not in merged_servers[server_name]:
+                    merged_servers[server_name]["env"] = {}
+                merged_servers[server_name]["env"]["WORKSPACE_PATH"] = workspace_path
 
         # Inject user context as env vars for MCP servers that need it
         if user_context:
