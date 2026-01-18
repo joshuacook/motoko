@@ -53,19 +53,26 @@ def create_major_tools(workspace_path: str):
             skill_name = args["skill_name"]
             instructions = args.get("instructions", "")
 
-            # Find the skill file
-            skill_file = skills_dir / f"{skill_name}.md"
+            # Find the skill file - skills are in directories: {skill_name}/SKILL.md
+            skill_file = skills_dir / skill_name / "SKILL.md"
+            if not skill_file.exists():
+                # Try legacy flat file format
+                skill_file = skills_dir / f"{skill_name}.md"
             if not skill_file.exists():
                 # Try with report suffix
                 skill_file = skills_dir / f"{skill_name}-report.md"
 
             if not skill_file.exists():
-                # List available skills
-                available = [f.stem for f in skills_dir.glob("*.md")] if skills_dir.exists() else []
+                # List available skills (directories with SKILL.md)
+                available = []
+                if skills_dir.exists():
+                    for d in skills_dir.iterdir():
+                        if d.is_dir() and (d / "SKILL.md").exists():
+                            available.append(d.name)
                 return {
                     "content": [{
                         "type": "text",
-                        "text": f"Error: Skill '{skill_name}' not found. Available skills: {', '.join(available) or '(none)'}"
+                        "text": f"Error: Skill '{skill_name}' not found. Available skills: {', '.join(sorted(available)) or '(none)'}"
                     }]
                 }
 
@@ -117,20 +124,26 @@ def create_major_tools(workspace_path: str):
                 }
 
             skills = []
-            for skill_file in sorted(skills_dir.glob("*.md")):
+            # Skills are in directories: {skill_name}/SKILL.md
+            for skill_dir in sorted(skills_dir.iterdir()):
+                if not skill_dir.is_dir():
+                    continue
+                skill_file = skill_dir / "SKILL.md"
+                if not skill_file.exists():
+                    continue
                 try:
                     post = frontmatter.load(skill_file)
-                    title = post.get("title", skill_file.stem)
+                    title = post.get("title", skill_dir.name)
                     description = post.get("description", "")
                     skills.append({
-                        "name": skill_file.stem,
+                        "name": skill_dir.name,
                         "title": title,
                         "description": description[:100] + "..." if len(description) > 100 else description,
                     })
                 except Exception:
                     skills.append({
-                        "name": skill_file.stem,
-                        "title": skill_file.stem,
+                        "name": skill_dir.name,
+                        "title": skill_dir.name,
                         "description": "(failed to load metadata)",
                     })
 
