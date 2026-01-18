@@ -1,0 +1,205 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 550" font-family="system-ui, -apple-system, sans-serif">
+  <!-- Background -->
+  <rect width="1240" height="550" fill="#0a0a0a"/>
+
+  <!-- ==================== CHAT MODE ==================== -->
+  <rect x="10" y="10" width="400" height="480" rx="12" fill="#141414" stroke="#333" stroke-width="1"/>
+
+  <!-- Chat Header -->
+  <rect x="10" y="10" width="400" height="45" rx="12" fill="#1e1e1e"/>
+  <rect x="10" y="40" width="400" height="15" fill="#1e1e1e"/>
+  <text x="30" y="40" fill="white" font-size="14" font-weight="bold">CHAT MODE</text>
+  <rect x="330" y="22" width="55" height="22" rx="4" fill="#2563eb"/>
+  <text x="345" y="38" fill="white" font-size="11">Chat</text>
+
+  <!-- User message -->
+  <rect x="150" y="75" width="240" height="36" rx="8" fill="#2563eb"/>
+  <text x="165" y="98" fill="white" font-size="12">How's our deliverability?</text>
+
+  <!-- Agent thinking -->
+  <rect x="30" y="125" width="180" height="28" rx="6" fill="#1e1e1e"/>
+  <text x="45" y="144" fill="#888" font-size="11">Running analysis...</text>
+
+  <!-- Skill card -->
+  <rect x="30" y="165" width="220" height="75" rx="8" fill="#1a1a2e" stroke="#2563eb" stroke-width="1"/>
+  <text x="45" y="188" fill="#2563eb" font-size="10">marketo-deliverability</text>
+  <text x="45" y="210" fill="#4ade80" font-size="12">Bounce Rate: 3.2% ✓</text>
+  <text x="45" y="230" fill="#facc15" font-size="12">Domains at Risk: 2 ⚠</text>
+
+  <!-- Agent response -->
+  <rect x="30" y="255" width="280" height="55" rx="8" fill="#1e1e1e"/>
+  <text x="45" y="278" fill="#ccc" font-size="11">Two domains have elevated bounce</text>
+  <text x="45" y="296" fill="#ccc" font-size="11">rates. Want me to dig in?</text>
+
+  <!-- User reply -->
+  <rect x="180" y="325" width="210" height="36" rx="8" fill="#2563eb"/>
+  <text x="195" y="348" fill="white" font-size="12">Yes, and create a task</text>
+
+  <!-- Agent confirmation -->
+  <rect x="30" y="375" width="200" height="28" rx="6" fill="#1e1e1e"/>
+  <text x="45" y="394" fill="#4ade80" font-size="11">✓ Created task #000047</text>
+
+  <!-- Input -->
+  <rect x="25" y="430" width="370" height="40" rx="8" fill="#1e1e1e" stroke="#333" stroke-width="1"/>
+  <text x="45" y="455" fill="#666" font-size="12">Type a message...</text>
+
+  <!-- Chat label -->
+  <text x="210" y="505" fill="#888" font-size="11" text-anchor="middle">Conversation with agent</text>
+  <text x="210" y="522" fill="#666" font-size="10" text-anchor="middle">Agent CRUDs for you</text>
+
+  <!-- ==================== LAKE MODE ==================== -->
+  <rect x="420" y="10" width="400" height="480" rx="12" fill="#141414" stroke="#333" stroke-width="1"/>
+
+  <!-- Lake Header -->
+  <rect x="420" y="10" width="400" height="45" rx="12" fill="#1e1e1e"/>
+  <rect x="420" y="40" width="400" height="15" fill="#1e1e1e"/>
+  <text x="440" y="40" fill="white" font-size="14" font-weight="bold">LAKE MODE</text>
+  <rect x="740" y="22" width="55" height="22" rx="4" fill="#2563eb"/>
+  <text x="757" y="38" fill="white" font-size="11">Lake</text>
+
+  <!-- Sidebar -->
+  <rect x="420" y="55" width="110" height="435" fill="#1a1a1a"/>
+
+  <!-- Tree -->
+  <text x="432" y="82" fill="#888" font-size="10">▼ tasks (12)</text>
+  <text x="442" y="100" fill="#2563eb" font-size="10">● 000047-inv...</text>
+  <text x="442" y="116" fill="#666" font-size="10">○ 000046-q1...</text>
+  <text x="442" y="132" fill="#666" font-size="10">○ 000045-upd...</text>
+  <text x="432" y="158" fill="#888" font-size="10">▶ campaigns (8)</text>
+  <text x="432" y="178" fill="#888" font-size="10">▶ reports (3)</text>
+  <text x="432" y="198" fill="#888" font-size="10">▶ journal (24)</text>
+
+  <!-- New button -->
+  <rect x="430" y="430" width="90" height="26" rx="4" fill="#1e1e1e" stroke="#333" stroke-width="1"/>
+  <text x="455" y="448" fill="#888" font-size="10">+ New</text>
+
+  <!-- Document view -->
+  <text x="545" y="82" fill="white" font-size="14" font-weight="bold"># Investigate Bounces</text>
+
+  <!-- Frontmatter box -->
+  <rect x="540" y="95" width="260" height="70" rx="6" fill="#1a1a2e"/>
+  <text x="555" y="115" fill="#666" font-size="10">---</text>
+  <text x="555" y="132" fill="#888" font-size="10">status: <tspan fill="#4ade80">open</tspan></text>
+  <text x="555" y="149" fill="#888" font-size="10">priority: <tspan fill="#facc15">high</tspan></text>
+
+  <!-- Content -->
+  <text x="545" y="190" fill="#888" font-size="11">## Description</text>
+  <text x="545" y="212" fill="#ccc" font-size="10">Two domains showing elevated</text>
+  <text x="545" y="228" fill="#ccc" font-size="10">bounce rates:</text>
+  <text x="545" y="250" fill="#ccc" font-size="10">• acme.com (4.2%)</text>
+  <text x="545" y="266" fill="#ccc" font-size="10">• bigcorp.net (3.8%)</text>
+
+  <text x="545" y="295" fill="#888" font-size="11">## Next Steps</text>
+  <text x="545" y="317" fill="#ccc" font-size="10">☐ Pull bounce logs</text>
+  <text x="545" y="333" fill="#ccc" font-size="10">☐ Check DNS records</text>
+  <text x="545" y="349" fill="#ccc" font-size="10">☐ Contact postmaster</text>
+
+  <!-- Action buttons -->
+  <rect x="545" y="375" width="50" height="24" rx="4" fill="#1e1e1e" stroke="#333" stroke-width="1"/>
+  <text x="558" y="392" fill="#888" font-size="10">Edit</text>
+  <rect x="605" y="375" width="55" height="24" rx="4" fill="#1e1e1e" stroke="#333" stroke-width="1"/>
+  <text x="615" y="392" fill="#888" font-size="10">Delete</text>
+
+  <!-- Chat input -->
+  <rect x="540" y="430" width="265" height="40" rx="8" fill="#1e1e1e" stroke="#333" stroke-width="1"/>
+  <text x="555" y="455" fill="#666" font-size="11">Ask about this file...</text>
+
+  <!-- Lake label -->
+  <text x="620" y="505" fill="#888" font-size="11" text-anchor="middle">Browse + edit files directly</text>
+  <text x="620" y="522" fill="#666" font-size="10" text-anchor="middle">Chat assists while you work</text>
+
+  <!-- ==================== CRUD MODE ==================== -->
+  <rect x="830" y="10" width="400" height="480" rx="12" fill="#141414" stroke="#333" stroke-width="1"/>
+
+  <!-- CRUD Header -->
+  <rect x="830" y="10" width="400" height="45" rx="12" fill="#1e1e1e"/>
+  <rect x="830" y="40" width="400" height="15" fill="#1e1e1e"/>
+  <text x="850" y="40" fill="white" font-size="14" font-weight="bold">CRUD MODE</text>
+
+  <!-- Tabs -->
+  <rect x="850" y="65" width="55" height="22" rx="4" fill="#2563eb"/>
+  <text x="862" y="81" fill="white" font-size="10">Tasks</text>
+  <text x="920" y="81" fill="#666" font-size="10">Campaigns</text>
+  <text x="1000" y="81" fill="#666" font-size="10">Reports</text>
+
+  <!-- New button -->
+  <rect x="1130" y="63" width="80" height="26" rx="4" fill="#2563eb"/>
+  <text x="1143" y="81" fill="white" font-size="10">+ New Task</text>
+
+  <!-- Filters -->
+  <rect x="850" y="100" width="70" height="24" rx="4" fill="#1e1e1e" stroke="#333" stroke-width="1"/>
+  <text x="860" y="117" fill="#888" font-size="9">Status ▼</text>
+  <rect x="930" y="100" width="70" height="24" rx="4" fill="#1e1e1e" stroke="#333" stroke-width="1"/>
+  <text x="940" y="117" fill="#888" font-size="9">Project ▼</text>
+
+  <!-- Table header -->
+  <rect x="845" y="135" width="375" height="30" fill="#1e1e1e"/>
+  <text x="875" y="155" fill="#888" font-size="10">Title</text>
+  <text x="1050" y="155" fill="#888" font-size="10">Status</text>
+  <text x="1140" y="155" fill="#888" font-size="10">Priority</text>
+
+  <!-- Row 1 -->
+  <rect x="845" y="165" width="375" height="40" fill="#141414"/>
+  <rect x="855" y="180" width="12" height="12" rx="2" fill="none" stroke="#444" stroke-width="1"/>
+  <text x="878" y="191" fill="#ccc" font-size="10">Investigate bounce rates</text>
+  <circle cx="1060" cy="185" r="4" fill="#4ade80"/>
+  <text x="1070" y="190" fill="#ccc" font-size="10">Open</text>
+  <rect x="1140" y="177" width="35" height="16" rx="3" fill="#7c2d12"/>
+  <text x="1147" y="189" fill="#fdba74" font-size="9">High</text>
+
+  <!-- Row 2 -->
+  <rect x="845" y="205" width="375" height="40" fill="#0f0f0f"/>
+  <rect x="855" y="220" width="12" height="12" rx="2" fill="none" stroke="#444" stroke-width="1"/>
+  <text x="878" y="231" fill="#ccc" font-size="10">Q1 campaign review</text>
+  <circle cx="1060" cy="225" r="4" fill="#4ade80"/>
+  <text x="1070" y="230" fill="#ccc" font-size="10">Open</text>
+  <rect x="1140" y="217" width="38" height="16" rx="3" fill="#1e3a5f"/>
+  <text x="1147" y="229" fill="#93c5fd" font-size="9">Med</text>
+
+  <!-- Row 3 -->
+  <rect x="845" y="245" width="375" height="40" fill="#141414"/>
+  <rect x="855" y="260" width="12" height="12" rx="2" fill="none" stroke="#444" stroke-width="1"/>
+  <text x="878" y="271" fill="#888" font-size="10">Update nurture sequence</text>
+  <circle cx="1060" cy="265" r="4" fill="#666"/>
+  <text x="1070" y="270" fill="#888" font-size="10">Done</text>
+  <rect x="1140" y="257" width="30" height="16" rx="3" fill="#1e1e1e"/>
+  <text x="1148" y="269" fill="#888" font-size="9">Low</text>
+
+  <!-- Row 4 -->
+  <rect x="845" y="285" width="375" height="40" fill="#0f0f0f"/>
+  <rect x="855" y="300" width="12" height="12" rx="2" fill="none" stroke="#444" stroke-width="1"/>
+  <text x="878" y="311" fill="#ccc" font-size="10">Fix unsubscribe flow</text>
+  <circle cx="1060" cy="305" r="4" fill="#4ade80"/>
+  <text x="1070" y="310" fill="#ccc" font-size="10">Open</text>
+  <rect x="1140" y="297" width="35" height="16" rx="3" fill="#7c2d12"/>
+  <text x="1147" y="309" fill="#fdba74" font-size="9">High</text>
+
+  <!-- Row 5 -->
+  <rect x="845" y="325" width="375" height="40" fill="#141414"/>
+  <rect x="855" y="340" width="12" height="12" rx="2" fill="none" stroke="#444" stroke-width="1"/>
+  <text x="878" y="351" fill="#ccc" font-size="10">Segment cleanup</text>
+  <circle cx="1060" cy="345" r="4" fill="#666"/>
+  <text x="1070" y="350" fill="#888" font-size="10">Done</text>
+  <rect x="1140" y="337" width="38" height="16" rx="3" fill="#1e1e1e"/>
+  <text x="1147" y="349" fill="#888" font-size="9">Med</text>
+
+  <!-- Tachikoma card -->
+  <rect x="850" y="385" width="365" height="40" rx="8" fill="#1a1a2e" stroke="#2563eb" stroke-width="1"/>
+  <text x="870" y="410" fill="#ccc" font-size="10">💡 3 tasks could be auto-closed</text>
+  <rect x="1150" y="395" width="50" height="22" rx="4" fill="#2563eb"/>
+  <text x="1160" y="411" fill="white" font-size="9">Review</text>
+
+  <!-- Pagination -->
+  <text x="1100" y="455" fill="#666" font-size="10">5 of 12</text>
+  <rect x="1155" y="440" width="22" height="22" rx="4" fill="#1e1e1e"/>
+  <text x="1162" y="456" fill="#888" font-size="10">&lt;</text>
+  <rect x="1182" y="440" width="22" height="22" rx="4" fill="#1e1e1e"/>
+  <text x="1189" y="456" fill="#888" font-size="10">&gt;</text>
+
+  <!-- CRUD label -->
+  <text x="1030" y="505" fill="#888" font-size="11" text-anchor="middle">Tables and forms</text>
+  <text x="1030" y="522" fill="#666" font-size="10" text-anchor="middle">Agent invisible (magic behind)</text>
+
+  <!-- Bottom tagline -->
+  <text x="620" y="545" fill="#444" font-size="11" text-anchor="middle">Same data. Same Context Lake. Three windows into it.</text>
+</svg>

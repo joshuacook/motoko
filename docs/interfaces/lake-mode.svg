@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 500" font-family="system-ui, -apple-system, sans-serif">
+  <!-- Background -->
+  <rect width="400" height="500" fill="#0a0a0a"/>
+
+  <!-- Header -->
+  <rect width="400" height="50" fill="#141414"/>
+  <text x="20" y="32" fill="#888" font-size="14">Demand Strike</text>
+  <text x="250" y="32" fill="#666" font-size="12">Chat</text>
+  <rect x="295" y="15" width="60" height="24" rx="4" fill="#2563eb"/>
+  <text x="312" y="32" fill="white" font-size="12">Lake</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="50" width="120" height="450" fill="#141414"/>
+
+  <!-- Entity tree -->
+  <text x="15" y="80" fill="#888" font-size="11">▼ tasks (12)</text>
+  <text x="25" y="100" fill="#2563eb" font-size="11">○ 000047-inv...</text>
+  <text x="25" y="118" fill="#666" font-size="11">○ 000046-q1...</text>
+  <text x="25" y="136" fill="#666" font-size="11">○ 000045-upd...</text>
+
+  <text x="15" y="165" fill="#888" font-size="11">▶ campaigns (8)</text>
+  <text x="15" y="188" fill="#888" font-size="11">▶ reports (3)</text>
+  <text x="15" y="211" fill="#888" font-size="11">▶ journal (24)</text>
+
+  <!-- New button -->
+  <rect x="10" y="420" width="100" height="30" rx="6" fill="#1e1e1e" stroke="#333" stroke-width="1"/>
+  <text x="35" y="440" fill="#888" font-size="12">+ New</text>
+
+  <!-- Main content area -->
+  <rect x="130" y="60" width="260" height="380" rx="8" fill="#141414"/>
+
+  <!-- Document header -->
+  <text x="150" y="95" fill="white" font-size="16" font-weight="bold"># Investigate Bounce Rates</text>
+
+  <!-- Frontmatter -->
+  <rect x="145" y="110" width="230" height="70" rx="4" fill="#1a1a2e"/>
+  <text x="160" y="130" fill="#666" font-size="11">---</text>
+  <text x="160" y="148" fill="#888" font-size="11">status: <tspan fill="#4ade80">open</tspan></text>
+  <text x="160" y="166" fill="#888" font-size="11">priority: <tspan fill="#facc15">high</tspan></text>
+
+  <!-- Content preview -->
+  <text x="150" y="210" fill="#888" font-size="12">## Description</text>
+  <text x="150" y="235" fill="#ccc" font-size="11">Two domains showing elevated</text>
+  <text x="150" y="253" fill="#ccc" font-size="11">bounce rates:</text>
+  <text x="150" y="278" fill="#ccc" font-size="11">• acme.com (4.2%)</text>
+  <text x="150" y="296" fill="#ccc" font-size="11">• bigcorp.net (3.8%)</text>
+
+  <text x="150" y="330" fill="#888" font-size="12">## Next Steps</text>
+  <text x="150" y="355" fill="#ccc" font-size="11">☐ Pull bounce logs</text>
+  <text x="150" y="373" fill="#ccc" font-size="11">☐ Check DNS records</text>
+  <text x="150" y="391" fill="#ccc" font-size="11">☐ Contact postmaster</text>
+
+  <!-- Action buttons -->
+  <rect x="145" y="410" width="55" height="24" rx="4" fill="#1e1e1e" stroke="#333" stroke-width="1"/>
+  <text x="160" y="427" fill="#888" font-size="11">Edit</text>
+  <rect x="210" y="410" width="65" height="24" rx="4" fill="#1e1e1e" stroke="#333" stroke-width="1"/>
+  <text x="222" y="427" fill="#888" font-size="11">Delete</text>
+
+  <!-- Chat assist input -->
+  <rect x="130" y="445" width="260" height="35" rx="6" fill="#1e1e1e" stroke="#333" stroke-width="1"/>
+  <text x="145" y="468" fill="#666" font-size="11">Ask about this file...</text>
+
+  <!-- Label -->
+  <text x="200" y="495" fill="#666" font-size="10" text-anchor="middle">LAKE MODE</text>
+</svg>

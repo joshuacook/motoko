@@ -313,7 +313,37 @@ class SessionManager:
         except IOError:
             return []
 
-        return messages
+        # Consolidate assistant messages within each turn (matches streaming behavior)
+        # During streaming, multi-turn tool interactions accumulate all text into one message
+        # When loading history, we consolidate all assistant text between user messages
+        consolidated = []
+        pending_assistant_texts = []
+
+        for msg in messages:
+            if msg.role == 'user':
+                # Flush pending assistant texts before adding user message
+                if pending_assistant_texts:
+                    consolidated.append(SessionMessage(
+                        role='assistant',
+                        content='\n\n'.join(pending_assistant_texts),
+                    ))
+                    pending_assistant_texts = []
+                consolidated.append(msg)
+            elif msg.role == 'assistant':
+                # Accumulate assistant text
+                pending_assistant_texts.append(msg.content)
+            else:
+                # tool_use/tool_result - add as-is (will be filtered by frontend)
+                consolidated.append(msg)
+
+        # Flush any remaining assistant texts
+        if pending_assistant_texts:
+            consolidated.append(SessionMessage(
+                role='assistant',
+                content='\n\n'.join(pending_assistant_texts),
+            ))
+
+        return consolidated
 
     def get_last_assistant_message(self, workspace_path: str, session_id: str) -> str | None:
         """Get the last assistant message from a session (for title generation)."""

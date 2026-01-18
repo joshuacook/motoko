@@ -129,8 +129,15 @@ class MajorAgent:
             workspace_path=workspace,
         )
 
-        # Build tool list
-        tools = ['AskUserQuestion'] if on_ask_user else None
+        # Build tool list - include both AskUserQuestion (if callback provided) and MCP tools
+        # Note: We build allowed_tools later with MCP wildcards, but tools list
+        # should include the specific tools we want the SDK to expose
+        tools = None
+        if on_ask_user:
+            tools = ['AskUserQuestion']
+            # Add MCP tool wildcards to tools list so they're exposed to the model
+            for server_name in (mcp_servers or {}).keys():
+                tools.append(f"mcp__{server_name}__*")
 
         # Create can_use_tool handler if we have a callback
         can_use_tool = None
