@@ -2,10 +2,33 @@
 
 from __future__ import annotations
 
+import re
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+def slugify(text: str) -> str:
+    """Convert text to a URL-friendly slug.
+
+    Args:
+        text: Text to slugify
+
+    Returns:
+        Lowercase slug with hyphens
+    """
+    # Lowercase and replace spaces/underscores with hyphens
+    slug = text.lower().strip()
+    slug = re.sub(r'[\s_]+', '-', slug)
+    # Remove non-alphanumeric characters except hyphens
+    slug = re.sub(r'[^a-z0-9-]', '', slug)
+    # Collapse multiple hyphens
+    slug = re.sub(r'-+', '-', slug)
+    # Strip leading/trailing hyphens
+    slug = slug.strip('-')
+    return slug
 
 
 class Schema:
@@ -107,9 +130,24 @@ class Schema:
         config = self.get_entity_config(entity_type)
         naming = config["naming"]
 
-        # Simple template substitution
+        # Build substitution dict with special values
+        subs = dict(frontmatter)
+
+        # Handle {slug} - derive from title if not explicitly provided
+        if "{slug}" in naming and "slug" not in subs:
+            title = frontmatter.get("title", "untitled")
+            subs["slug"] = slugify(title)
+
+        # Handle {date} - use today if not provided
+        if "{date}" in naming and "date" not in subs:
+            subs["date"] = date.today().isoformat()
+
+        # Handle {number} - would need to scan directory for next number
+        # For now, leave it for the caller to provide
+
+        # Template substitution
         filename = naming
-        for key, value in frontmatter.items():
+        for key, value in subs.items():
             placeholder = "{" + key + "}"
             if placeholder in filename:
                 filename = filename.replace(placeholder, str(value))
