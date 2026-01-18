@@ -161,6 +161,12 @@ class MajorAgent:
 
             can_use_tool = handle_tool_permission
 
+        # Build allowed_tools list for MCP servers
+        allowed_tools = []
+        for server_name in mcp_servers.keys():
+            # Allow all tools from each MCP server using wildcard
+            allowed_tools.append(f"mcp__{server_name}__*")
+
         # Configure SDK options
         # Note: Only pass tools if explicitly set - None disables all tools
         options_kwargs = {
@@ -169,6 +175,7 @@ class MajorAgent:
             "resume": session_id,  # SDK loads history from JSONL
             "system_prompt": system_prompt,
             "mcp_servers": mcp_servers if mcp_servers else None,
+            "allowed_tools": allowed_tools if allowed_tools else None,
             "can_use_tool": can_use_tool,
             "include_partial_messages": True,  # SDK sends deltas
             "permission_mode": 'bypassPermissions',
