@@ -61,6 +61,7 @@ async def chat(request: ChatRequest):
         """Generate SSE events from agent."""
         current_text = ""
         session_id = request.session_id
+        sent_session_start = False
 
         async for event in agent.send_message(
             message=request.message,
@@ -78,22 +79,25 @@ async def chat(request: ChatRequest):
                             delta = block.text[len(current_text):]
                             if delta:
                                 current_text = block.text
-                                yield f"data: {json.dumps({'type': 'text', 'content': delta})}\n\n"
+                                yield f"data: {json.dumps({'type': 'text_delta', 'text': delta})}\n\n"
 
             elif event_type == "StreamEvent":
                 # Raw stream event
                 if hasattr(event, "type"):
                     if event.type == "content_block_delta":
                         if hasattr(event, "delta") and hasattr(event.delta, "text"):
-                            yield f"data: {json.dumps({'type': 'text', 'content': event.delta.text})}\n\n"
+                            yield f"data: {json.dumps({'type': 'text_delta', 'text': event.delta.text})}\n\n"
 
             elif event_type == "ResultMessage":
                 # Final result with session ID
                 if hasattr(event, "session_id"):
                     session_id = event.session_id
+                    if not sent_session_start:
+                        yield f"data: {json.dumps({'type': 'session_start', 'session_id': session_id})}\n\n"
+                        sent_session_start = True
 
-        # Send session ID at the end
-        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
+        # Send done event
+        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'usage': {'input_tokens': 0, 'output_tokens': 0}})}\n\n"
 
     return StreamingResponse(
         generate(),
