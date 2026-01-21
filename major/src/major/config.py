@@ -1,6 +1,7 @@
 """Configuration for Major agent - MCP loading, workspace validation."""
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,11 +12,11 @@ class MajorConfig:
     """Configuration for Major agent.
 
     Attributes:
-        workspace_root: Root directory for workspaces (default: /opt/workspaces)
+        workspace_root: Root directory for workspaces (from WORKSPACE_ROOT env or /opt/workspaces)
         platform_config_path: Path to platform .mcp.json (default: /opt/claude-code-apps/platform)
         platform_skills_path: Path to platform skills (default: /opt/claude-code-apps/platform/.claude/skills)
     """
-    workspace_root: str = "/opt/workspaces"
+    workspace_root: str = field(default_factory=lambda: os.environ.get("WORKSPACE_ROOT", os.environ.get("WORKSPACE_PATH", "/opt/workspaces")))
     platform_config_path: str = "/opt/claude-code-apps/platform"
     platform_skills_path: str = "/opt/claude-code-apps/platform/.claude/skills"
 
