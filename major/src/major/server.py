@@ -95,6 +95,8 @@ async def chat(request: ChatRequest):
                     if not sent_session_start:
                         yield f"data: {json.dumps({'type': 'session_start', 'session_id': session_id})}\n\n"
                         sent_session_start = True
+                    # Register session with session_manager so it appears in list
+                    session_manager.create_session(workspace_path, session_id)
 
         # Send done event
         yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'usage': {'input_tokens': 0, 'output_tokens': 0}})}\n\n"
@@ -135,6 +137,8 @@ async def chat_sync(request: ChatRequest):
         elif event_type == "ResultMessage":
             if hasattr(event, "session_id"):
                 session_id = event.session_id
+                # Register session with session_manager so it appears in list
+                session_manager.create_session(workspace_path, session_id)
 
     return ChatResponse(
         session_id=session_id or "unknown",
