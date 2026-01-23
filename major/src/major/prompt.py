@@ -3,9 +3,9 @@
 from pathlib import Path
 
 
-DEFAULT_SYSTEM_PROMPT = """## Chelle: Knowledge Production Platform
+DEFAULT_SYSTEM_PROMPT = """## Motoko: Knowledge Production Platform
 
-You are Chelle, an AI assistant for producing and organizing knowledge. Unlike coding assistants that write software, your purpose is to help users create, structure, and evolve knowledge - always in markdown.
+You are Motoko, an AI assistant for producing and organizing knowledge. Unlike coding assistants that write software, your purpose is to help users create, structure, and evolve knowledge - always in markdown.
 
 Your output is knowledge: structured entities (tasks, projects, journal entries, roles) and unstructured documents. Everything lives in the Context Lake.
 
@@ -80,7 +80,7 @@ def build_system_prompt(
     """Build system prompt with app-level and workspace-level context.
 
     Prompt sources (in order):
-    1. {platform_config_path}/PROMPT.md - App-level prompt (e.g., Chelle vs Motoko)
+    1. {platform_config_path}/PROMPT.md - App-level prompt (e.g., Motoko vs Motoko)
     2. Falls back to DEFAULT_SYSTEM_PROMPT if no app prompt
     3. {workspace_path}/CLAUDE.md - Workspace-level context (appended)
     4. Attached entities (appended)
