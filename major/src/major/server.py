@@ -220,10 +220,9 @@ async def list_entity_types() -> list[EntityType]:
 
     for item in workspace.iterdir():
         if item.is_dir() and item.name not in skip_dirs and not item.name.startswith('.'):
-            # Count markdown files
+            # Count markdown files (show directory even if empty)
             count = len(list(item.glob('**/*.md')))
-            if count > 0:
-                types.append(EntityType(name=item.name, count=count))
+            types.append(EntityType(name=item.name, count=count))
 
     return sorted(types, key=lambda t: t.name)
 
