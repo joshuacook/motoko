@@ -4,6 +4,7 @@ import asyncio
 import os
 import json
 import re
+import subprocess
 import yaml
 from pathlib import Path
 from typing import AsyncGenerator
@@ -18,6 +19,58 @@ from .sessions import session_manager, SessionMetadata
 
 
 app = FastAPI(title="Major Chat Agent", version="0.1.0")
+
+
+def git_commit(workspace: Path, message: str) -> bool:
+    """Commit changes to git repository.
+
+    Args:
+        workspace: Path to workspace
+        message: Commit message
+
+    Returns:
+        True if commit succeeded, False otherwise
+    """
+    try:
+        # Add all changes
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+
+        # Check if there are changes to commit
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+        )
+
+        if not result.stdout.strip():
+            # No changes to commit
+            return True
+
+        # Commit
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+
+        # Push (best effort, don't fail if push fails)
+        subprocess.run(
+            ["git", "push"],
+            cwd=workspace,
+            capture_output=True,
+        )
+
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Git commit failed: {e}")
+        return False
 
 # Initialize agent
 agent: MajorAgent | None = None
@@ -305,6 +358,9 @@ async def create_entity(entity_type: str, request: CreateEntityRequest) -> Entit
 
     entity_path.write_text(content)
 
+    # Commit to git
+    git_commit(workspace, f"Create {entity_type}/{entity_id}")
+
     return Entity(
         id=entity_id,
         type=entity_type,
@@ -338,6 +394,9 @@ async def update_entity(entity_type: str, entity_id: str, request: UpdateEntityR
     content = serialize_frontmatter(frontmatter, body)
     entity_path.write_text(content)
 
+    # Commit to git
+    git_commit(workspace, f"Update {entity_type}/{entity_id}")
+
     title = frontmatter.get('title', entity_id.replace('-', ' ').title())
 
     return Entity(
@@ -359,6 +418,10 @@ async def delete_entity(entity_type: str, entity_id: str):
         raise HTTPException(status_code=404, detail="Entity not found")
 
     entity_path.unlink()
+
+    # Commit to git
+    git_commit(workspace, f"Delete {entity_type}/{entity_id}")
+
     return {"status": "deleted", "id": entity_id}
 
 
