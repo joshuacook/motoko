@@ -30,6 +30,8 @@ class SessionMetadata:
     title: str | None = None
     archived: bool = False
     project_id: str | None = None
+    entity_type: str | None = None  # For sessions linked to entities (e.g., "handoffs")
+    entity_id: str | None = None    # For sessions linked to entities (e.g., "handoff-foo")
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
@@ -86,11 +88,21 @@ class SessionManager:
         with open(path, 'w') as f:
             json.dump(metadata, f, indent=2)
 
-    def list_sessions(self, workspace_path: str, include_archived: bool = False) -> list[SessionMetadata]:
+    def list_sessions(
+        self,
+        workspace_path: str,
+        include_archived: bool = False,
+        entity_type: str | None = None,  # None = all, "null" = only sessions without entity
+    ) -> list[SessionMetadata]:
         """List all sessions for a workspace.
 
         Merges SDK session files with local metadata.
         Sessions exist if they have a JSONL file, metadata is optional.
+
+        Args:
+            workspace_path: Path to the workspace
+            include_archived: Whether to include archived sessions
+            entity_type: Filter by entity type. "null" means only sessions without entity.
         """
         sessions = []
         metadata = self._load_metadata(workspace_path)
@@ -121,12 +133,26 @@ class SessionManager:
             if meta.get('archived', False) and not include_archived:
                 continue
 
+            # Filter by entity_type if specified
+            session_entity_type = meta.get('entity_type')
+            if entity_type is not None:
+                if entity_type == "null":
+                    # Only sessions without entity
+                    if session_entity_type is not None:
+                        continue
+                else:
+                    # Only sessions with matching entity type
+                    if session_entity_type != entity_type:
+                        continue
+
             session = SessionMetadata(
                 session_id=session_id,
                 workspace_path=workspace_path,
                 title=meta.get('title'),
                 archived=meta.get('archived', False),
                 project_id=meta.get('project_id'),
+                entity_type=session_entity_type,
+                entity_id=meta.get('entity_id'),
                 created_at=meta.get('created_at', datetime.utcnow().isoformat()),
                 updated_at=meta.get('updated_at', datetime.utcnow().isoformat()),
             )
@@ -154,6 +180,8 @@ class SessionManager:
             title=meta.get('title') if meta else None,
             archived=meta.get('archived', False) if meta else False,
             project_id=meta.get('project_id') if meta else None,
+            entity_type=meta.get('entity_type') if meta else None,
+            entity_id=meta.get('entity_id') if meta else None,
             created_at=meta.get('created_at', datetime.utcnow().isoformat()) if meta else datetime.utcnow().isoformat(),
             updated_at=meta.get('updated_at', datetime.utcnow().isoformat()) if meta else datetime.utcnow().isoformat(),
         )
@@ -165,6 +193,8 @@ class SessionManager:
         title: str | None = None,
         archived: bool | None = None,
         project_id: str | None = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
     ) -> SessionMetadata:
         """Update session metadata."""
         metadata = self._load_metadata(workspace_path)
@@ -180,6 +210,10 @@ class SessionManager:
             metadata[session_id]['archived'] = archived
         if project_id is not None:
             metadata[session_id]['project_id'] = project_id
+        if entity_type is not None:
+            metadata[session_id]['entity_type'] = entity_type
+        if entity_id is not None:
+            metadata[session_id]['entity_id'] = entity_id
 
         metadata[session_id]['updated_at'] = datetime.utcnow().isoformat()
         metadata[session_id]['workspace_path'] = workspace_path
