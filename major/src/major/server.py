@@ -199,6 +199,80 @@ async def chat_sync(request: ChatRequest):
     )
 
 
+# Background task storage for chat/send
+_running_sessions: dict[str, asyncio.Task] = {}
+
+
+class ChatSendResponse(BaseModel):
+    """Response from chat/send endpoint."""
+    session_id: str
+    status: str  # "started" or "already_running"
+
+
+@app.post("/chat/send", response_model=ChatSendResponse)
+async def chat_send(request: ChatRequest):
+    """Send a chat message (fire-and-forget).
+
+    Starts Claude in background and returns immediately.
+    Poll /sessions/{session_id}/history to get updates.
+    """
+    workspace_path = os.environ.get("WORKSPACE_PATH", "/workspace")
+
+    # Generate a pending session ID if not provided
+    session_id = request.session_id
+    if not session_id:
+        import uuid
+        session_id = f"pending-{uuid.uuid4().hex[:8]}"
+
+    # Check if already running
+    if session_id in _running_sessions:
+        task = _running_sessions[session_id]
+        if not task.done():
+            return ChatSendResponse(session_id=session_id, status="already_running")
+
+    agent = get_agent()
+
+    async def run_chat():
+        """Run chat in background, writing to session files."""
+        nonlocal session_id
+        try:
+            async for event in agent.send_message(
+                message=request.message,
+                workspace_path=workspace_path,
+                session_id=session_id if not session_id.startswith("pending-") else None,
+            ):
+                event_type = type(event).__name__
+                if event_type == "ResultMessage":
+                    if hasattr(event, "session_id") and event.session_id:
+                        # Update with real session ID from SDK
+                        real_session_id = event.session_id
+                        session_manager.create_session(workspace_path, real_session_id)
+                        # Update tracking
+                        if session_id in _running_sessions:
+                            _running_sessions[real_session_id] = _running_sessions.pop(session_id)
+                        session_id = real_session_id
+        except Exception as e:
+            print(f"[CHAT_SEND] Background task error: {e}", flush=True)
+        finally:
+            # Clean up tracking
+            _running_sessions.pop(session_id, None)
+
+    # Start background task
+    task = asyncio.create_task(run_chat())
+    _running_sessions[session_id] = task
+
+    # Wait briefly for SDK to create the real session ID
+    await asyncio.sleep(0.5)
+
+    # Check if we got a real session ID
+    for sid, t in list(_running_sessions.items()):
+        if t is task and not sid.startswith("pending-"):
+            session_id = sid
+            break
+
+    return ChatSendResponse(session_id=session_id, status="started")
+
+
 # ============== Entity Endpoints ==============
 
 def get_workspace_path() -> str:
