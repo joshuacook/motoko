@@ -5,9 +5,13 @@ import os
 import json
 import re
 import subprocess
+import uuid
 import yaml
+from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncGenerator
+from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +21,94 @@ from pydantic import BaseModel
 from .agent import MajorAgent
 from .config import MajorConfig
 from .sessions import session_manager, SessionMetadata
+
+
+# ============== Event Bus for Slack-like async messaging ==============
+
+@dataclass
+class SessionEvent:
+    """Event that can be sent to clients."""
+    type: str  # history, user_message, text_delta, tool_use, assistant_message, done, error
+    data: dict = field(default_factory=dict)
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+
+class SessionEventBus:
+    """Manages event streams for sessions.
+
+    Supports multiple subscribers per session and message queuing.
+    """
+
+    def __init__(self):
+        # Event queues for each subscriber (session_id -> list of queues)
+        self._subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
+        # Message queue for each session (messages waiting to be processed)
+        self._message_queues: dict[str, asyncio.Queue] = {}
+        # Currently processing flag per session
+        self._processing: dict[str, bool] = {}
+        # Lock for thread safety
+        self._lock = asyncio.Lock()
+
+    async def subscribe(self, session_id: str) -> asyncio.Queue:
+        """Subscribe to events for a session. Returns a queue that receives events."""
+        async with self._lock:
+            queue: asyncio.Queue = asyncio.Queue()
+            self._subscribers[session_id].append(queue)
+            return queue
+
+    async def unsubscribe(self, session_id: str, queue: asyncio.Queue):
+        """Unsubscribe from session events."""
+        async with self._lock:
+            if session_id in self._subscribers:
+                try:
+                    self._subscribers[session_id].remove(queue)
+                except ValueError:
+                    pass
+                if not self._subscribers[session_id]:
+                    del self._subscribers[session_id]
+
+    async def publish(self, session_id: str, event: SessionEvent):
+        """Publish event to all subscribers of a session."""
+        async with self._lock:
+            subscribers = self._subscribers.get(session_id, [])
+
+        for queue in subscribers:
+            try:
+                await queue.put(event)
+            except Exception:
+                pass  # Subscriber may have disconnected
+
+    async def queue_message(self, session_id: str, message: str) -> bool:
+        """Queue a user message for processing. Returns True if queued."""
+        async with self._lock:
+            if session_id not in self._message_queues:
+                self._message_queues[session_id] = asyncio.Queue()
+
+            await self._message_queues[session_id].put(message)
+            return True
+
+    async def get_next_message(self, session_id: str) -> str | None:
+        """Get next message from queue, or None if empty."""
+        async with self._lock:
+            if session_id not in self._message_queues:
+                return None
+
+            try:
+                return self._message_queues[session_id].get_nowait()
+            except asyncio.QueueEmpty:
+                return None
+
+    def is_processing(self, session_id: str) -> bool:
+        """Check if session is currently processing."""
+        return self._processing.get(session_id, False)
+
+    def set_processing(self, session_id: str, value: bool):
+        """Set processing state for session."""
+        self._processing[session_id] = value
+
+
+# Global event bus
+event_bus = SessionEventBus()
 
 
 app = FastAPI(title="Major Chat Agent", version="0.1.0")
@@ -559,6 +651,40 @@ async def list_sessions(include_archived: bool = False) -> list[SessionInfo]:
     ]
 
 
+class CreateSessionRequest(BaseModel):
+    """Request to create a new session."""
+    title: str | None = None
+
+
+@app.post("/sessions", response_model=SessionInfo)
+async def create_session(request: CreateSessionRequest = None):
+    """Create a new chat session.
+
+    Returns the session info with generated ID. Use this ID to:
+    1. Connect to /sessions/{id}/events for real-time updates
+    2. Send messages via POST /sessions/{id}/messages
+    """
+    workspace = get_workspace_path()
+    session_id = str(uuid.uuid4())
+
+    # Create session
+    session_manager.create_session(workspace, session_id)
+
+    # Update title if provided
+    if request and request.title:
+        session_manager.update_session(workspace, session_id, title=request.title)
+
+    session = session_manager.get_session(workspace, session_id)
+
+    return SessionInfo(
+        id=session.session_id,
+        title=session.title,
+        archived=session.archived,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+    )
+
+
 @app.get("/sessions/{session_id}")
 async def get_session(session_id: str) -> SessionInfo:
     """Get session info."""
@@ -631,6 +757,223 @@ async def delete_session(session_id: str):
     # Commit deletion to git
     git_commit(Path(workspace), f"Delete session: {session_id}")
     return {"status": "deleted", "session_id": session_id}
+
+
+# ============== Slack-like Async Chat Endpoints ==============
+
+class SendMessageRequest(BaseModel):
+    """Request to send a message (fire-and-forget)."""
+    message: str
+
+
+class SendMessageResponse(BaseModel):
+    """Response from sending a message."""
+    status: str  # "queued"
+    message_id: str
+
+
+@app.post("/sessions/{session_id}/messages", response_model=SendMessageResponse)
+async def send_message(session_id: str, request: SendMessageRequest):
+    """Send a message to a session (fire-and-forget).
+
+    The message is queued and the agent will process it asynchronously.
+    Events are pushed to subscribers via the /sessions/{id}/events SSE endpoint.
+    """
+    workspace_path = get_workspace_path()
+
+    # Verify session exists or create it
+    session = session_manager.get_session(workspace_path, session_id)
+    if not session:
+        # Create the session
+        session_manager.create_session(workspace_path, session_id)
+
+    # Generate message ID
+    message_id = f"msg-{uuid.uuid4().hex[:12]}"
+
+    # Queue the message
+    await event_bus.queue_message(session_id, request.message)
+
+    # Publish user_message event to subscribers
+    await event_bus.publish(session_id, SessionEvent(
+        type="user_message",
+        data={"message": request.message, "message_id": message_id}
+    ))
+
+    # Start processing if not already running
+    if not event_bus.is_processing(session_id):
+        asyncio.create_task(_process_session_messages(session_id, workspace_path))
+
+    return SendMessageResponse(status="queued", message_id=message_id)
+
+
+async def _process_session_messages(session_id: str, workspace_path: str):
+    """Process queued messages for a session.
+
+    Runs in background, picks up messages from queue, sends to agent,
+    publishes events to subscribers.
+    """
+    if event_bus.is_processing(session_id):
+        return  # Already processing
+
+    event_bus.set_processing(session_id, True)
+
+    try:
+        agent = get_agent()
+
+        while True:
+            # Get next message from queue
+            message = await event_bus.get_next_message(session_id)
+            if message is None:
+                break  # No more messages
+
+            # Publish processing_start event
+            await event_bus.publish(session_id, SessionEvent(
+                type="processing_start",
+                data={"message": message}
+            ))
+
+            current_text = ""
+
+            try:
+                async for event in agent.send_message(
+                    message=message,
+                    workspace_path=workspace_path,
+                    session_id=session_id,
+                ):
+                    event_type = type(event).__name__
+
+                    if event_type == "AssistantMessage":
+                        # Extract text content
+                        if hasattr(event, "content"):
+                            for block in event.content:
+                                if hasattr(block, "text"):
+                                    delta = block.text[len(current_text):]
+                                    if delta:
+                                        current_text = block.text
+                                        await event_bus.publish(session_id, SessionEvent(
+                                            type="text_delta",
+                                            data={"text": delta}
+                                        ))
+                                # Check for tool use
+                                if hasattr(block, "type") and block.type == "tool_use":
+                                    tool_name = getattr(block, "name", "unknown")
+                                    await event_bus.publish(session_id, SessionEvent(
+                                        type="tool_use",
+                                        data={"tool": tool_name, "status": "running"}
+                                    ))
+
+                    elif event_type == "StreamEvent":
+                        # Raw stream event
+                        if hasattr(event, "type"):
+                            if event.type == "content_block_delta":
+                                if hasattr(event, "delta") and hasattr(event.delta, "text"):
+                                    await event_bus.publish(session_id, SessionEvent(
+                                        type="text_delta",
+                                        data={"text": event.delta.text}
+                                    ))
+                            elif event.type == "content_block_start":
+                                # Tool use start
+                                if hasattr(event, "content_block"):
+                                    block = event.content_block
+                                    if hasattr(block, "type") and block.type == "tool_use":
+                                        tool_name = getattr(block, "name", "unknown")
+                                        await event_bus.publish(session_id, SessionEvent(
+                                            type="tool_use",
+                                            data={"tool": tool_name, "status": "start"}
+                                        ))
+                            elif event.type == "content_block_stop":
+                                # Could be end of tool use
+                                await event_bus.publish(session_id, SessionEvent(
+                                    type="tool_use",
+                                    data={"status": "stop"}
+                                ))
+
+                    elif event_type == "ResultMessage":
+                        # Final result
+                        if hasattr(event, "session_id") and event.session_id:
+                            session_manager.create_session(workspace_path, event.session_id)
+
+                # Publish assistant_message with full content
+                if current_text:
+                    await event_bus.publish(session_id, SessionEvent(
+                        type="assistant_message",
+                        data={"content": current_text}
+                    ))
+
+                # Commit to git
+                git_commit(Path(workspace_path), f"Chat: {session_id}")
+
+            except Exception as e:
+                await event_bus.publish(session_id, SessionEvent(
+                    type="error",
+                    data={"error": str(e)}
+                ))
+
+        # All messages processed
+        await event_bus.publish(session_id, SessionEvent(
+            type="done",
+            data={"session_id": session_id}
+        ))
+
+    finally:
+        event_bus.set_processing(session_id, False)
+
+
+@app.get("/sessions/{session_id}/events")
+async def session_events(session_id: str):
+    """Subscribe to session events via Server-Sent Events.
+
+    On connect:
+    1. Sends 'connected' event
+    2. Sends 'history' event with all past messages
+    3. Streams real-time events (user_message, text_delta, tool_use, assistant_message, done, error)
+
+    Client should maintain this connection for the duration of the chat session.
+    """
+    workspace_path = get_workspace_path()
+
+    async def generate() -> AsyncGenerator[str, None]:
+        # Subscribe to events
+        queue = await event_bus.subscribe(session_id)
+
+        try:
+            # Send connected event
+            yield f"data: {json.dumps({'type': 'connected', 'session_id': session_id})}\n\n"
+
+            # Send history
+            try:
+                messages = session_manager.get_history(workspace_path, session_id)
+                history_data = [
+                    {"role": m.role, "content": m.content, "tool_name": m.tool_name}
+                    for m in messages
+                ]
+                yield f"data: {json.dumps({'type': 'history', 'messages': history_data})}\n\n"
+            except Exception:
+                # No history yet, that's fine
+                yield f"data: {json.dumps({'type': 'history', 'messages': []})}\n\n"
+
+            # Stream events
+            while True:
+                try:
+                    # Wait for event with timeout to allow checking connection
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {json.dumps({'type': event.type, **event.data, 'timestamp': event.timestamp})}\n\n"
+                except asyncio.TimeoutError:
+                    # Send keepalive
+                    yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
+
+        finally:
+            await event_bus.unsubscribe(session_id, queue)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
 
 
 def main():
