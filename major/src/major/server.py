@@ -823,8 +823,10 @@ async def _process_session_messages(session_id: str, workspace_path: str):
     # Check if SDK session file exists (determines if we should resume or create new)
     sessions_dir = Path(workspace_path) / ".chelle" / "sessions"
     session_file = sessions_dir / f"{session_id}.jsonl"
+    print(f"[DEBUG] Checking for session file: {session_file}, exists: {session_file.exists()}", flush=True)
     if session_file.exists():
         sdk_session_id = session_id
+    print(f"[DEBUG] Using sdk_session_id: {sdk_session_id}", flush=True)
 
     try:
         agent = get_agent()
