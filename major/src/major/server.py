@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -19,6 +20,15 @@ from .sessions import session_manager, SessionMetadata
 
 
 app = FastAPI(title="Major Chat Agent", version="0.1.0")
+
+# CORS for local development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:3004"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def git_commit(workspace: Path, message: str) -> bool:
@@ -151,6 +161,9 @@ async def chat(request: ChatRequest):
                     # Register session with session_manager so it appears in list
                     session_manager.create_session(workspace_path, session_id)
 
+        # Commit session to git (git as database - commit after every message)
+        git_commit(Path(workspace_path), f"Chat: {session_id}")
+
         # Send done event
         yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'usage': {'input_tokens': 0, 'output_tokens': 0}})}\n\n"
 
@@ -192,6 +205,9 @@ async def chat_sync(request: ChatRequest):
                 session_id = event.session_id
                 # Register session with session_manager so it appears in list
                 session_manager.create_session(workspace_path, session_id)
+
+    # Commit session to git (git as database - commit after every message)
+    git_commit(Path(workspace_path), f"Chat: {session_id}")
 
     return ChatResponse(
         session_id=session_id or "unknown",
@@ -251,6 +267,8 @@ async def chat_send(request: ChatRequest):
                         if session_id in _running_sessions:
                             _running_sessions[real_session_id] = _running_sessions.pop(session_id)
                         session_id = real_session_id
+            # Commit session to git (git as database - commit after every message)
+            git_commit(Path(workspace_path), f"Chat: {session_id}")
         except Exception as e:
             print(f"[CHAT_SEND] Background task error: {e}", flush=True)
         finally:
@@ -593,6 +611,9 @@ async def update_session(session_id: str, request: UpdateSessionRequest) -> Sess
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    # Commit metadata change to git
+    git_commit(Path(workspace), f"Update session: {session_id}")
+
     return SessionInfo(
         id=session.session_id,
         title=session.title,
@@ -607,6 +628,8 @@ async def delete_session(session_id: str):
     """Delete a session."""
     workspace = get_workspace_path()
     session_manager.delete_session(workspace, session_id)
+    # Commit deletion to git
+    git_commit(Path(workspace), f"Delete session: {session_id}")
     return {"status": "deleted", "session_id": session_id}
 
 
