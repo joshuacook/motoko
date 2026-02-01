@@ -817,6 +817,15 @@ async def _process_session_messages(session_id: str, workspace_path: str):
 
     event_bus.set_processing(session_id, True)
 
+    # Track the actual SDK session ID (may differ from our session_id for new sessions)
+    sdk_session_id: str | None = None
+
+    # Check if SDK session file exists (determines if we should resume or create new)
+    sessions_dir = Path(workspace_path) / ".chelle" / "sessions"
+    session_file = sessions_dir / f"{session_id}.jsonl"
+    if session_file.exists():
+        sdk_session_id = session_id
+
     try:
         agent = get_agent()
 
@@ -838,7 +847,7 @@ async def _process_session_messages(session_id: str, workspace_path: str):
                 async for event in agent.send_message(
                     message=message,
                     workspace_path=workspace_path,
-                    session_id=session_id,
+                    session_id=sdk_session_id,  # None for new sessions, SDK creates its own ID
                 ):
                     event_type = type(event).__name__
 
@@ -889,9 +898,23 @@ async def _process_session_messages(session_id: str, workspace_path: str):
                                 ))
 
                     elif event_type == "ResultMessage":
-                        # Final result
+                        # Final result - capture SDK's session ID
                         if hasattr(event, "session_id") and event.session_id:
-                            session_manager.create_session(workspace_path, event.session_id)
+                            actual_sdk_id = event.session_id
+                            session_manager.create_session(workspace_path, actual_sdk_id)
+
+                            # If SDK created a new session with different ID, symlink to our session_id
+                            if actual_sdk_id != session_id:
+                                sdk_file = sessions_dir / f"{actual_sdk_id}.jsonl"
+                                our_file = sessions_dir / f"{session_id}.jsonl"
+                                if sdk_file.exists() and not our_file.exists():
+                                    try:
+                                        our_file.symlink_to(sdk_file.name)
+                                    except Exception:
+                                        pass  # Best effort
+
+                            # Use SDK's session ID for future messages in this batch
+                            sdk_session_id = actual_sdk_id
 
                 # Publish assistant_message with full content
                 if current_text:
