@@ -13,10 +13,12 @@ from pathlib import Path
 from typing import AsyncGenerator
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from .library import LibraryManager, LibraryFile as LibraryFileModel, get_content_type, is_supported_file
 
 from .agent import MajorAgent
 from .config import MajorConfig
@@ -997,6 +999,148 @@ async def session_events(session_id: str):
             "X-Accel-Buffering": "no",  # Disable nginx buffering
         }
     )
+
+
+# ============== Library Endpoints ==============
+
+class LibraryFileResponse(BaseModel):
+    """Library file info for API."""
+    id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    status: str
+    error_message: str | None
+    entity_type: str | None
+    entity_id: str | None
+    created_at: str
+    processed_at: str | None
+
+
+def _library_file_to_response(lf: LibraryFileModel) -> LibraryFileResponse:
+    """Convert LibraryFile dataclass to response model."""
+    return LibraryFileResponse(
+        id=lf.id,
+        filename=lf.filename,
+        content_type=lf.content_type,
+        size_bytes=lf.size_bytes,
+        status=lf.status,
+        error_message=lf.error_message,
+        entity_type=lf.entity_type,
+        entity_id=lf.entity_id,
+        created_at=lf.created_at,
+        processed_at=lf.processed_at,
+    )
+
+
+@app.get("/library/files")
+async def list_library_files() -> list[LibraryFileResponse]:
+    """List all library files."""
+    workspace = get_workspace_path()
+    manager = LibraryManager(workspace)
+    files = manager.list_files()
+    return [_library_file_to_response(f) for f in files]
+
+
+@app.get("/library/files/{file_id}")
+async def get_library_file(file_id: str) -> LibraryFileResponse:
+    """Get a specific library file."""
+    workspace = get_workspace_path()
+    manager = LibraryManager(workspace)
+    library_file = manager.get_file(file_id)
+
+    if not library_file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return _library_file_to_response(library_file)
+
+
+@app.post("/library/upload")
+async def upload_library_file(file: UploadFile = File(...)) -> LibraryFileResponse:
+    """Upload and process a file.
+
+    Supports: PDF (.pdf), Markdown (.md), Plain Text (.txt)
+    """
+    workspace = get_workspace_path()
+    manager = LibraryManager(workspace)
+
+    # Validate file type
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+
+    if not is_supported_file(file.filename):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Supported: .pdf, .md, .txt"
+        )
+
+    # Read file content
+    content = await file.read()
+
+    # Generate file ID
+    file_id = uuid.uuid4().hex[:12]
+
+    # Determine content type
+    content_type = file.content_type or get_content_type(file.filename)
+
+    # Save the file
+    library_file = manager.save_uploaded_file(
+        file_id=file_id,
+        filename=file.filename,
+        content=content,
+        content_type=content_type,
+    )
+
+    # Process the file synchronously (extract content, create entity)
+    library_file = manager.process_file(file_id)
+
+    # Commit to git
+    git_commit(Path(workspace), f"Library: upload {file.filename}")
+
+    return _library_file_to_response(library_file)
+
+
+@app.delete("/library/files/{file_id}")
+async def delete_library_file(file_id: str):
+    """Delete a library file and its associated entity."""
+    workspace = get_workspace_path()
+    manager = LibraryManager(workspace)
+
+    library_file = manager.get_file(file_id)
+    if not library_file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    filename = library_file.filename
+    deleted = manager.delete_file(file_id)
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Commit to git
+    git_commit(Path(workspace), f"Library: delete {filename}")
+
+    return {"status": "deleted", "id": file_id}
+
+
+@app.post("/library/files/{file_id}/retry")
+async def retry_library_file(file_id: str) -> LibraryFileResponse:
+    """Retry processing a failed file."""
+    workspace = get_workspace_path()
+    manager = LibraryManager(workspace)
+
+    library_file = manager.get_file(file_id)
+    if not library_file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+        library_file = manager.retry_processing(file_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Commit to git
+    git_commit(Path(workspace), f"Library: retry {library_file.filename}")
+
+    return _library_file_to_response(library_file)
 
 
 def main():
