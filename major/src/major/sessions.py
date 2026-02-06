@@ -115,8 +115,16 @@ class SessionManager:
                 # Skip agent sidechain sessions (agent-*)
                 if jsonl_file.stem.startswith('agent-'):
                     continue
-                # Skip empty files
-                if jsonl_file.stat().st_size == 0:
+                # Skip empty files and handle broken symlinks
+                try:
+                    if jsonl_file.stat().st_size == 0:
+                        continue
+                except FileNotFoundError:
+                    # Broken symlink - remove it and skip
+                    try:
+                        jsonl_file.unlink()
+                    except OSError:
+                        pass
                     continue
                 session_ids.add(jsonl_file.stem)
 
@@ -234,10 +242,11 @@ class SessionManager:
             del metadata[session_id]
             self._save_metadata(workspace_path, metadata)
 
-        # Optionally delete JSONL file
+        # Delete JSONL file (or broken symlink)
         sdk_dir = self._get_sdk_sessions_dir(workspace_path)
         jsonl_path = sdk_dir / f"{session_id}.jsonl"
-        if jsonl_path.exists():
+        # exists() returns False for broken symlinks, so also check is_symlink()
+        if jsonl_path.exists() or jsonl_path.is_symlink():
             jsonl_path.unlink()
             return True
 

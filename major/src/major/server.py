@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .library import LibraryManager, LibraryFile as LibraryFileModel, get_content_type, is_supported_file
+from .organize import WorkspaceOrganizer
 
 from .agent import MajorAgent
 from .config import MajorConfig
@@ -118,7 +119,7 @@ app = FastAPI(title="Major Chat Agent", version="0.1.0")
 # CORS for local development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:3004"],
+    allow_origins=["http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:3004", "http://localhost:3005"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -383,6 +384,49 @@ async def chat_send(request: ChatRequest):
             break
 
     return ChatSendResponse(session_id=session_id, status="started")
+
+
+# ============== Schema Endpoint ==============
+
+class SchemaEntityType(BaseModel):
+    """Entity type from schema."""
+    name: str
+    directory: str
+    description: str | None = None
+    icon: str | None = None
+
+
+class SchemaResponse(BaseModel):
+    """Workspace schema response."""
+    entities: list[SchemaEntityType]
+
+
+@app.get("/schema", response_model=SchemaResponse)
+async def get_schema():
+    """Get workspace schema (entity types from .claude/schema.yaml)."""
+    workspace = Path(os.environ.get("WORKSPACE_PATH", "/workspace"))
+    schema_path = workspace / ".claude" / "schema.yaml"
+
+    if not schema_path.exists():
+        return SchemaResponse(entities=[])
+
+    try:
+        data = yaml.safe_load(schema_path.read_text()) or {}
+        entities_data = data.get("entities", {})
+
+        entities = []
+        for name, config in entities_data.items():
+            entities.append(SchemaEntityType(
+                name=name,
+                directory=config.get("directory", name),
+                description=config.get("description"),
+                icon=config.get("icon"),
+            ))
+
+        return SchemaResponse(entities=entities)
+    except (yaml.YAMLError, Exception) as e:
+        # Return empty on parse error
+        return SchemaResponse(entities=[])
 
 
 # ============== Entity Endpoints ==============
@@ -1055,6 +1099,56 @@ async def get_library_file(file_id: str) -> LibraryFileResponse:
     return _library_file_to_response(library_file)
 
 
+class LibraryFileContentResponse(BaseModel):
+    """Library file content response."""
+    id: str
+    filename: str
+    content: str
+    summaries: dict | None = None
+    topics: list[str] | None = None
+
+
+@app.get("/library/files/{file_id}/content")
+async def get_library_file_content(file_id: str) -> LibraryFileContentResponse:
+    """Get the extracted content of a library file."""
+    workspace = Path(get_workspace_path())
+    manager = LibraryManager(str(workspace))
+    library_file = manager.get_file(file_id)
+
+    if not library_file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Read extracted content
+    content_path = workspace / ".library" / "files" / file_id / "extracted.txt"
+    if not content_path.exists():
+        raise HTTPException(status_code=404, detail="Content not found - file may not be processed yet")
+
+    content = content_path.read_text()
+
+    # Try to load index data for summaries/topics
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    doc = index.get_document(file_id)
+
+    summaries = None
+    topics = None
+    if doc:
+        summaries = {
+            "brief": doc.summaries.brief,
+            "standard": doc.summaries.standard,
+            "detailed": doc.summaries.detailed,
+        }
+        topics = doc.topics
+
+    return LibraryFileContentResponse(
+        id=file_id,
+        filename=library_file.filename,
+        content=content,
+        summaries=summaries,
+        topics=topics,
+    )
+
+
 @app.post("/library/upload")
 async def upload_library_file(file: UploadFile = File(...)) -> LibraryFileResponse:
     """Upload and process a file.
@@ -1141,6 +1235,48 @@ async def retry_library_file(file_id: str) -> LibraryFileResponse:
     git_commit(Path(workspace), f"Library: retry {library_file.filename}")
 
     return _library_file_to_response(library_file)
+
+
+@app.post("/library/infer-schema")
+async def infer_schema():
+    """Analyze library files and propose a workspace schema."""
+    workspace = get_workspace_path()
+    manager = LibraryManager(workspace)
+    organizer = WorkspaceOrganizer(Path(workspace))
+
+    try:
+        proposal = organizer.infer_schema(manager)
+        return proposal
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class OrganizeRequest(BaseModel):
+    """Request body for workspace organization."""
+    workspace_schema: dict
+    file_assignments: list[dict]
+
+
+@app.post("/library/organize")
+async def organize_workspace(request: OrganizeRequest):
+    """Apply schema and create structured entities (SSE stream)."""
+    workspace = get_workspace_path()
+    manager = LibraryManager(workspace)
+    organizer = WorkspaceOrganizer(Path(workspace))
+
+    async def generate():
+        async for event in organizer.organize(
+            request.workspace_schema,
+            request.file_assignments,
+            manager,
+        ):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 def main():

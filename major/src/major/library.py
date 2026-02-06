@@ -159,6 +159,7 @@ class LibraryManager:
             "text/markdown": ".md",
             "text/plain": ".txt",
             "text/x-markdown": ".md",
+            "application/vnd.apple.pages": ".pages",
             # Audio
             "audio/mpeg": ".mp3",
             "audio/mp4": ".m4a",
@@ -174,7 +175,10 @@ class LibraryManager:
         return mapping.get(content_type, "")
 
     def process_file(self, file_id: str) -> LibraryFile:
-        """Process an uploaded file and extract content to an entity.
+        """Process an uploaded file and extract its content.
+
+        Extracts text/content from the file and stores it in the library.
+        Does NOT create workspace entities - use organize() for that.
 
         Args:
             file_id: ID of the file to process
@@ -193,9 +197,10 @@ class LibraryManager:
         index[file_id] = library_file
         self._save_index(index)
 
+        file_dir = self.files_dir / file_id
+
         try:
             # Get the original file
-            file_dir = self.files_dir / file_id
             original_files = list(file_dir.glob("original.*"))
             if not original_files:
                 raise ValueError("Original file not found")
@@ -207,36 +212,41 @@ class LibraryManager:
             extra_metadata = {}
             if ext == ".pdf":
                 extracted_text = self._extract_pdf(original_path)
-                entity_type = "documents"
+                file_type = "document"
             elif ext in (".md", ".markdown"):
                 extracted_text = self._extract_markdown(original_path)
-                entity_type = "documents"
+                file_type = "document"
             elif ext in (".txt", ".text"):
                 extracted_text = self._extract_text(original_path)
-                entity_type = "documents"
+                file_type = "document"
             elif ext in (".mp3", ".m4a", ".wav", ".webm", ".ogg"):
                 extracted_text, duration_seconds = self._extract_audio(original_path)
-                entity_type = "transcripts"
+                file_type = "audio"
                 if duration_seconds is not None:
                     extra_metadata["duration_seconds"] = duration_seconds
             elif ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
                 extracted_text = self._extract_image(original_path)
-                entity_type = "images"
+                file_type = "image"
+            elif ext == ".pages":
+                extracted_text = self._extract_pages(original_path)
+                file_type = "document"
             else:
                 raise ValueError(f"Unsupported file type: {ext}")
-            entity_id = self._create_entity(
-                entity_type=entity_type,
-                title=Path(library_file.filename).stem,
-                content=extracted_text,
-                source_file=file_id,
-                source_filename=library_file.filename,
-                extra_metadata=extra_metadata,
-            )
 
-            # Update metadata
+            # Store extracted content in library (not workspace)
+            extracted_path = file_dir / "extracted.txt"
+            extracted_path.write_text(extracted_text)
+
+            # Store extra metadata if any
+            if extra_metadata:
+                extra_path = file_dir / "extra.json"
+                extra_path.write_text(json.dumps(extra_metadata))
+
+            # Update metadata - note: entity_type/entity_id are NOT set
+            # They will be set when the file is organized into workspace
             library_file.status = "complete"
-            library_file.entity_type = entity_type
-            library_file.entity_id = entity_id
+            library_file.entity_type = file_type  # Store file type for organizing
+            library_file.entity_id = None  # No workspace entity yet
             library_file.processed_at = datetime.utcnow().isoformat()
             library_file.error_message = None
 
@@ -252,6 +262,55 @@ class LibraryManager:
         meta_path.write_text(json.dumps(library_file.to_dict(), indent=2))
 
         return library_file
+
+    def get_extracted_content(self, file_id: str) -> str | None:
+        """Get the extracted content for a library file.
+
+        Args:
+            file_id: ID of the file
+
+        Returns:
+            Extracted text content, or None if not extracted
+        """
+        extracted_path = self.files_dir / file_id / "extracted.txt"
+        if extracted_path.exists():
+            return extracted_path.read_text()
+        return None
+
+    def get_extra_metadata(self, file_id: str) -> dict | None:
+        """Get extra metadata for a library file (e.g., audio duration).
+
+        Args:
+            file_id: ID of the file
+
+        Returns:
+            Extra metadata dict, or None if none
+        """
+        extra_path = self.files_dir / file_id / "extra.json"
+        if extra_path.exists():
+            return json.loads(extra_path.read_text())
+        return None
+
+    def _update_file_entity(self, file_id: str, entity_type: str, entity_id: str):
+        """Update a library file's entity reference after organizing.
+
+        Args:
+            file_id: ID of the library file
+            entity_type: The entity type directory
+            entity_id: The created entity ID
+        """
+        index = self._load_index()
+        library_file = index.get(file_id)
+        if library_file:
+            library_file.entity_type = entity_type
+            library_file.entity_id = entity_id
+            index[file_id] = library_file
+            self._save_index(index)
+
+            # Also update the meta.json in the file directory
+            meta_path = self.files_dir / file_id / "meta.json"
+            if meta_path.exists():
+                meta_path.write_text(json.dumps(library_file.to_dict(), indent=2))
 
     def _extract_pdf(self, path: Path) -> str:
         """Extract text from a PDF file."""
@@ -384,6 +443,103 @@ class LibraryManager:
         }
         return mapping.get(ext, "image/png")
 
+    def _extract_pages(self, path: Path) -> str:
+        """Extract text from Apple Pages (.pages) file.
+
+        Tries multiple extraction methods:
+        1. AppleScript via Pages app (macOS only, most reliable)
+        2. Direct IWA parsing (fallback)
+
+        Args:
+            path: Path to the .pages file
+
+        Returns:
+            Extracted text as markdown
+        """
+        import subprocess
+        import tempfile
+        import zipfile
+
+        # Method 1: Try AppleScript with Pages app (macOS)
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
+                tmp_path = tmp.name
+
+            # AppleScript to open in Pages and export as plain text
+            script = f'''
+            tell application "Pages"
+                activate
+                set theDoc to open POSIX file "{path.resolve()}"
+                export theDoc to POSIX file "{tmp_path}" as unformatted text
+                close theDoc saving no
+            end tell
+            '''
+
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+
+            if result.returncode == 0 and Path(tmp_path).exists():
+                text = Path(tmp_path).read_text(encoding="utf-8")
+                Path(tmp_path).unlink()  # Clean up
+                if text.strip():
+                    return f"# {path.stem}\n\n{text}"
+
+        except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+            pass  # Fall through to next method
+
+        # Method 2: Direct IWA parsing (extract readable text from binary)
+        try:
+            texts = []
+            with zipfile.ZipFile(path, 'r') as z:
+                for name in z.namelist():
+                    if 'Document.iwa' in name:
+                        data = z.read(name)
+                        # Extract text strings from protobuf-like IWA format
+                        # Look for length-prefixed UTF-8 strings
+                        i = 0
+                        while i < len(data) - 10:
+                            # Common protobuf field markers for strings
+                            if data[i] in (0x0a, 0x12, 0x1a, 0x22, 0x2a, 0x32):
+                                i += 1
+                                if i < len(data):
+                                    length = data[i]
+                                    if 10 < length < 200 and i + length + 1 < len(data):
+                                        try:
+                                            text = data[i+1:i+1+length].decode('utf-8')
+                                            # Filter for actual readable text
+                                            if (len(text) > 15 and
+                                                ' ' in text and
+                                                text[0].isalpha() and
+                                                not text.startswith('chart-') and
+                                                not text.startswith('paragraph') and
+                                                'paragraphStyle' not in text):
+                                                texts.append(text)
+                                        except UnicodeDecodeError:
+                                            pass
+                                i += 1
+                            else:
+                                i += 1
+
+            if texts:
+                # Deduplicate and join
+                seen = set()
+                unique_texts = []
+                for t in texts:
+                    if t not in seen:
+                        seen.add(t)
+                        unique_texts.append(t)
+                return f"# {path.stem}\n\n" + "\n\n".join(unique_texts)
+
+        except zipfile.BadZipFile:
+            pass
+
+        raise ValueError("Could not extract text from .pages file. "
+                        "Try exporting as PDF or plain text from Pages app.")
+
     def _create_entity(
         self,
         entity_type: str,
@@ -476,6 +632,28 @@ class LibraryManager:
 
         return True
 
+    def archive_entity(self, entity_type: str, entity_id: str) -> bool:
+        """Move an entity to zzz_archive directory.
+
+        Args:
+            entity_type: Type directory (e.g., "documents")
+            entity_id: Entity ID (filename without .md)
+
+        Returns:
+            True if archived, False if not found
+        """
+        entity_dir = self.workspace / entity_type
+        archive_dir = entity_dir / "zzz_archive"
+        archive_dir.mkdir(exist_ok=True)
+
+        source = entity_dir / f"{entity_id}.md"
+        dest = archive_dir / f"{entity_id}.md"
+
+        if source.exists():
+            source.rename(dest)
+            return True
+        return False
+
     def retry_processing(self, file_id: str) -> LibraryFile:
         """Retry processing a failed file.
 
@@ -513,6 +691,7 @@ def get_content_type(filename: str) -> str:
         ".markdown": "text/markdown",
         ".txt": "text/plain",
         ".text": "text/plain",
+        ".pages": "application/vnd.apple.pages",
         # Audio
         ".mp3": "audio/mpeg",
         ".m4a": "audio/mp4",
@@ -534,7 +713,7 @@ def is_supported_file(filename: str) -> bool:
     ext = Path(filename).suffix.lower()
     return ext in (
         # Documents
-        ".pdf", ".md", ".markdown", ".txt", ".text",
+        ".pdf", ".md", ".markdown", ".txt", ".text", ".pages",
         # Audio
         ".mp3", ".m4a", ".wav", ".webm", ".ogg",
         # Images

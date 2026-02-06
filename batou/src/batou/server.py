@@ -13,6 +13,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 from batou.entities import EntityTools
+from batou.library import LibraryTools
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -21,8 +22,9 @@ logger = logging.getLogger("batou")
 # Create MCP server
 server = Server("batou")
 
-# Entity tools instance (initialized from WORKSPACE_PATH env var)
+# Tools instances (initialized from WORKSPACE_PATH env var)
 _entity_tools: EntityTools | None = None
+_library_tools: LibraryTools | None = None
 
 
 def get_entity_tools() -> EntityTools:
@@ -42,6 +44,16 @@ def get_entity_tools() -> EntityTools:
         _entity_tools = EntityTools(workspace_path)
         logger.info(f"[BATOU] EntityTools initialized")
     return _entity_tools
+
+
+def get_library_tools() -> LibraryTools:
+    """Get or create LibraryTools instance."""
+    global _library_tools
+    if _library_tools is None:
+        workspace_path = os.environ.get("WORKSPACE_PATH") or os.getcwd()
+        _library_tools = LibraryTools(workspace_path)
+        logger.info(f"[BATOU] LibraryTools initialized")
+    return _library_tools
 
 
 @server.list_tools()
@@ -272,6 +284,102 @@ async def list_tools() -> list[Tool]:
                 "required": ["query"],
             },
         ),
+        # Library tools for querying ingested documents
+        Tool(
+            name="browse_topics",
+            description="Browse library topics/concepts. Returns topics with document counts. Use to explore what knowledge is available in the library.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "topic_id": {
+                        "type": "string",
+                        "description": "Get details for a specific topic ID (optional)",
+                    },
+                    "include_counts": {
+                        "type": "boolean",
+                        "description": "Include document counts (default true)",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="find_documents",
+            description="Search for documents in the library by query. Returns documents with summaries at the requested level. Use to find relevant external content.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query (matches titles, summaries, topics)",
+                    },
+                    "topic_filter": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Filter by topic IDs (optional)",
+                    },
+                    "doc_type_filter": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Filter by document types (transcript, article, etc.)",
+                    },
+                    "summary_level": {
+                        "type": "string",
+                        "enum": ["brief", "standard", "detailed"],
+                        "description": "Summary level to return (default: standard)",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum results (default 10)",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="get_library_document",
+            description="Get a specific document from the library by ID. Returns full details including summaries and optionally full content.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "document_id": {
+                        "type": "string",
+                        "description": "Document ID",
+                    },
+                    "include_summary": {
+                        "type": "boolean",
+                        "description": "Include summaries (default true)",
+                    },
+                    "include_content": {
+                        "type": "boolean",
+                        "description": "Include full document content (default false)",
+                    },
+                },
+                "required": ["document_id"],
+            },
+        ),
+        Tool(
+            name="list_library_documents",
+            description="List all documents in the library with optional filtering by topic or type.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "topic_filter": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Filter by topic IDs (optional)",
+                    },
+                    "doc_type_filter": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Filter by document types (optional)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default 50)",
+                    },
+                },
+            },
+        ),
     ]
 
 
@@ -379,6 +487,40 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             "projects_dir_exists": (workspace / "projects").exists(),
             "projects_count": len(list((workspace / "projects").glob("*.md"))) if (workspace / "projects").exists() else 0,
         }
+
+    # Library tools
+    elif name == "browse_topics":
+        library = get_library_tools()
+        return library.browse_topics(
+            arguments.get("topic_id"),
+            arguments.get("include_counts", True),
+        )
+
+    elif name == "find_documents":
+        library = get_library_tools()
+        return library.find_documents(
+            arguments["query"],
+            arguments.get("topic_filter"),
+            arguments.get("doc_type_filter"),
+            arguments.get("summary_level", "standard"),
+            arguments.get("max_results", 10),
+        )
+
+    elif name == "get_library_document":
+        library = get_library_tools()
+        return library.get_document(
+            arguments["document_id"],
+            arguments.get("include_summary", True),
+            arguments.get("include_content", False),
+        )
+
+    elif name == "list_library_documents":
+        library = get_library_tools()
+        return library.list_documents(
+            arguments.get("topic_filter"),
+            arguments.get("doc_type_filter"),
+            arguments.get("limit", 50),
+        )
 
     else:
         raise ValueError(f"Unknown tool: {name}")
