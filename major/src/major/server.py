@@ -238,6 +238,10 @@ async def chat(request: ChatRequest):
                             if delta:
                                 current_text = block.text
                                 yield f"data: {json.dumps({'type': 'text_delta', 'text': delta})}\n\n"
+                        # Check for tool use blocks
+                        if hasattr(block, "type") and block.type == "tool_use":
+                            tool_name = getattr(block, "name", "unknown")
+                            yield f"data: {json.dumps({'type': 'tool_use', 'tool': tool_name, 'status': 'running'})}\n\n"
 
             elif event_type == "StreamEvent":
                 # Raw stream event
@@ -245,6 +249,14 @@ async def chat(request: ChatRequest):
                     if event.type == "content_block_delta":
                         if hasattr(event, "delta") and hasattr(event.delta, "text"):
                             yield f"data: {json.dumps({'type': 'text_delta', 'text': event.delta.text})}\n\n"
+                    elif event.type == "content_block_start":
+                        if hasattr(event, "content_block"):
+                            block = event.content_block
+                            if hasattr(block, "type") and block.type == "tool_use":
+                                tool_name = getattr(block, "name", "unknown")
+                                yield f"data: {json.dumps({'type': 'tool_use', 'tool': tool_name, 'status': 'start'})}\n\n"
+                    elif event.type == "content_block_stop":
+                        yield f"data: {json.dumps({'type': 'tool_use', 'status': 'stop'})}\n\n"
 
             elif event_type == "ResultMessage":
                 # Final result with session ID
