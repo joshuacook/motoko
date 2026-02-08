@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import uuid
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -135,6 +138,24 @@ async def list_tools() -> list[Tool]:
                 "required": ["file_id"],
             },
         ),
+        Tool(
+            name="import_google_doc",
+            description="Import a Google Doc into the library by URL. The doc must be shared as 'anyone with the link can view'. If the doc is private, ask the user to share it or paste the content.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Google Docs URL (e.g., https://docs.google.com/document/d/DOC_ID/edit)",
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Optional filename override. If not provided, uses the doc title.",
+                    },
+                },
+                "required": ["url"],
+            },
+        ),
     ]
 
 
@@ -176,6 +197,13 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
     elif name == "delete_library_file":
         return _delete_file(manager, arguments["file_id"])
+
+    elif name == "import_google_doc":
+        return _import_google_doc(
+            manager,
+            arguments["url"],
+            arguments.get("filename"),
+        )
 
     else:
         raise ValueError(f"Unknown tool: {name}")
@@ -310,6 +338,85 @@ def _delete_file(
             "success": False,
             "error": f"File not found: {file_id}",
         }
+
+
+_GOOGLE_DOC_ID_RE = re.compile(r"/document/d/([a-zA-Z0-9_-]+)")
+
+
+def _extract_google_doc_id(url: str) -> str:
+    """Extract Google Doc ID from a URL or raw ID string."""
+    match = _GOOGLE_DOC_ID_RE.search(url)
+    if match:
+        return match.group(1)
+    # Treat as raw doc ID if it looks like one (alphanumeric, hyphens, underscores)
+    stripped = url.strip()
+    if re.fullmatch(r"[a-zA-Z0-9_-]+", stripped):
+        return stripped
+    raise ValueError(f"Could not extract Google Doc ID from: {url}")
+
+
+def _fetch_google_doc_title(doc_id: str) -> str | None:
+    """Best-effort fetch of the doc title from the HTML page."""
+    try:
+        resp = httpx.get(
+            f"https://docs.google.com/document/d/{doc_id}/edit",
+            follow_redirects=True,
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            match = re.search(r"<title>(.+?)(?:\s*-\s*Google Docs)?</title>", resp.text)
+            if match:
+                title = match.group(1).strip()
+                if title:
+                    return title
+    except Exception:
+        pass
+    return None
+
+
+def _import_google_doc(
+    manager: LibraryManager,
+    url: str,
+    filename: str | None = None,
+) -> dict[str, Any]:
+    """Import a publicly-shared Google Doc into the library."""
+    doc_id = _extract_google_doc_id(url)
+
+    export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+    response = httpx.get(export_url, follow_redirects=True, timeout=30)
+
+    if response.status_code != 200:
+        return {
+            "success": False,
+            "error": (
+                "Could not access this Google Doc. It may be private. "
+                "Ask the user to either share it with 'anyone with the link can view', "
+                "or paste the content directly."
+            ),
+        }
+
+    content = response.text
+
+    if not filename:
+        filename = _fetch_google_doc_title(doc_id) or f"google-doc-{doc_id[:8]}"
+    if not filename.endswith((".md", ".txt")):
+        filename += ".md"
+
+    file_id = uuid.uuid4().hex[:12]
+    library_file = manager.save_uploaded_file(
+        file_id=file_id,
+        filename=filename,
+        content=content.encode("utf-8"),
+        content_type="text/markdown",
+    )
+    library_file = manager.process_file(file_id)
+
+    return {
+        "success": True,
+        "file": library_file.to_dict(),
+        "message": f"Imported Google Doc as '{filename}' (id: {file_id})",
+        "source_url": url,
+    }
 
 
 def main():
