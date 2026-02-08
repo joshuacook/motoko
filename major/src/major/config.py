@@ -89,7 +89,7 @@ class MajorConfig:
                     pass  # Skip invalid configs
 
         # Inject WORKSPACE_PATH for MCP servers that need it
-        for server_name in ["batou", "reports"]:
+        for server_name in ["batou", "reports", "library"]:
             if server_name in merged_servers:
                 if "env" not in merged_servers[server_name]:
                     merged_servers[server_name]["env"] = {}
