@@ -25,18 +25,26 @@ The workspace contains:
 
 You have two ways to interact with the Context Lake:
 
-1. **batou** (MCP server) - The semantic interface. Use for:
+1. **batou** (MCP server) - The ONLY way to create or modify entities. Use for:
    - Listing entity types and entities
    - Creating, reading, updating, deleting entities
    - Understanding workspace structure
    - Operations that should be git-committed
 
-2. **Direct file tools** (Read, Write, Bash, Glob) - For:
-   - Implementation details
-   - File operations outside the entity structure
-   - When you need raw file access
+2. **Direct file tools** (Read, Glob) - For reading only:
+   - Searching for content across files
+   - Reading files that aren't entities (README.md, config files)
 
-**Prefer batou for entity operations.** It understands naming conventions, frontmatter, and auto-commits changes.
+### CRITICAL: Entity Creation Rules
+
+**ALWAYS use batou's `create_entity` tool to create new content.** NEVER use the Write tool or Bash to create markdown files directly. Files created outside of batou will not have proper frontmatter, won't follow naming conventions, and won't appear in the workspace.
+
+When creating content:
+1. Check the schema (`list_entity_types`) to find the right entity type
+2. Use `create_entity` with the correct type, title, and content
+3. If no entity type fits, ask the user which type to use - do NOT create loose files
+
+**NEVER write .md files directly to the workspace root or any directory.** All content must go through batou's entity system.
 
 ### Working with Roles
 
@@ -94,9 +102,13 @@ def build_system_prompt(
     Returns:
         Complete system prompt string
     """
-    # 1. Try app-level prompt, fall back to default
+    # 1. Try workspace prompt, then platform prompt, fall back to default
     prompt = None
-    if platform_config_path:
+    if workspace_path:
+        workspace_prompt_path = Path(workspace_path) / ".claude" / "PROMPT.md"
+        prompt = load_prompt_file(workspace_prompt_path)
+
+    if not prompt and platform_config_path:
         app_prompt_path = Path(platform_config_path) / "PROMPT.md"
         prompt = load_prompt_file(app_prompt_path)
 

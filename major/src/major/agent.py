@@ -129,15 +129,14 @@ class MajorAgent:
             workspace_path=workspace,
         )
 
-        # Build tool list - include both AskUserQuestion (if callback provided) and MCP tools
-        # Note: We build allowed_tools later with MCP wildcards, but tools list
-        # should include the specific tools we want the SDK to expose
-        tools = None
+        # Build explicit tool list - only safe tools + MCP tools
+        # Write and Edit are excluded to force entity creation through Batou
+        tools = ['Read', 'Glob', 'Grep', 'Bash']
         if on_ask_user:
-            tools = ['AskUserQuestion']
-            # Add MCP tool wildcards to tools list so they're exposed to the model
-            for server_name in (mcp_servers or {}).keys():
-                tools.append(f"mcp__{server_name}__*")
+            tools.append('AskUserQuestion')
+        # Add MCP tool wildcards so they're exposed to the model
+        for server_name in (mcp_servers or {}).keys():
+            tools.append(f"mcp__{server_name}__*")
 
         # Create can_use_tool handler if we have a callback
         can_use_tool = None
@@ -176,21 +175,19 @@ class MajorAgent:
 
         # Configure SDK options
         # Note: Only pass tools if explicitly set - None disables all tools
-        options_kwargs = {
-            "cwd": workspace,
-            "model": self.model,
-            "resume": session_id,  # SDK loads history from JSONL
-            "system_prompt": system_prompt,
-            "mcp_servers": mcp_servers if mcp_servers else None,
-            "allowed_tools": allowed_tools if allowed_tools else None,
-            "can_use_tool": can_use_tool,
-            "include_partial_messages": True,  # SDK sends deltas
-            "permission_mode": 'bypassPermissions',
-            "setting_sources": ["project"],  # Load skills from .claude/skills/
-        }
-        if tools is not None:
-            options_kwargs["tools"] = tools
-        options = ClaudeAgentOptions(**options_kwargs)
+        options = ClaudeAgentOptions(
+            cwd=workspace,
+            model=self.model,
+            resume=session_id,  # SDK loads history from JSONL
+            system_prompt=system_prompt,
+            mcp_servers=mcp_servers if mcp_servers else None,
+            allowed_tools=allowed_tools if allowed_tools else None,
+            tools=tools,
+            can_use_tool=can_use_tool,
+            include_partial_messages=True,  # SDK sends deltas
+            permission_mode='bypassPermissions',
+            setting_sources=["project"],  # Load skills from .claude/skills/
+        )
 
         # Build message content (text or multimodal)
         if image_urls:

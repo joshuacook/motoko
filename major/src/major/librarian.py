@@ -368,7 +368,7 @@ class DocumentAnalyzer:
     """
 
     # Haiku model for cost-effective analysis
-    MODEL = "claude-3-haiku-20240307"
+    MODEL = "claude-haiku-4-5-20251001"
 
     def __init__(self):
         if not HAS_ANTHROPIC:
@@ -446,7 +446,7 @@ Return ONLY valid JSON, no other text."""
         if start == -1 or end == 0:
             raise ValueError("No JSON found in response")
 
-        data = json.loads(text[start:end])
+        data = json.loads(text[start:end], strict=False)
 
         # Validate and normalize
         return {

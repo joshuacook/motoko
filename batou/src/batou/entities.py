@@ -238,6 +238,14 @@ class EntityTools:
         Returns:
             Dict with created entity info or error
         """
+        # Validate entity type exists in schema
+        if self.schema.entities and not self.schema.has_entity_type(entity_type):
+            valid_types = self.schema.list_entity_types()
+            return {
+                "success": False,
+                "error": f"Unknown entity type '{entity_type}'. Valid types: {valid_types}",
+            }
+
         # Apply defaults from schema
         defaults = self.schema.get_defaults(entity_type)
         fm = {**defaults, **frontmatter}

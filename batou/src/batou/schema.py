@@ -154,6 +154,17 @@ class Schema:
 
         return filename
 
+    def has_entity_type(self, entity_type: str) -> bool:
+        """Check if an entity type is defined in the schema.
+
+        Args:
+            entity_type: The entity type name
+
+        Returns:
+            True if the entity type is defined in the schema
+        """
+        return entity_type in self.entities
+
     def list_entity_types(self) -> list[str]:
         """List all defined entity types.
 

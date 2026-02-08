@@ -81,17 +81,17 @@ class SessionEventBus:
             except Exception:
                 pass  # Subscriber may have disconnected
 
-    async def queue_message(self, session_id: str, message: str) -> bool:
+    async def queue_message(self, session_id: str, message: str, context: dict | None = None) -> bool:
         """Queue a user message for processing. Returns True if queued."""
         async with self._lock:
             if session_id not in self._message_queues:
                 self._message_queues[session_id] = asyncio.Queue()
 
-            await self._message_queues[session_id].put(message)
+            await self._message_queues[session_id].put((message, context))
             return True
 
-    async def get_next_message(self, session_id: str) -> str | None:
-        """Get next message from queue, or None if empty."""
+    async def get_next_message(self, session_id: str) -> tuple[str, dict | None] | None:
+        """Get next message and context from queue, or None if empty."""
         async with self._lock:
             if session_id not in self._message_queues:
                 return None
@@ -119,7 +119,7 @@ app = FastAPI(title="Major Chat Agent", version="0.1.0")
 # CORS for local development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:3004", "http://localhost:3005"],
+    allow_origins=["http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:3004", "http://localhost:3005", "http://localhost:3006", "http://localhost:3007"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -436,6 +436,29 @@ def get_workspace_path() -> str:
     return os.environ.get("WORKSPACE_PATH", "/workspace")
 
 
+def get_schema_entity_types() -> list[str] | None:
+    """Get valid entity types from schema. Returns None if no schema exists."""
+    workspace = Path(get_workspace_path())
+    schema_path = workspace / ".claude" / "schema.yaml"
+    if not schema_path.exists():
+        return None
+    try:
+        data = yaml.safe_load(schema_path.read_text()) or {}
+        return list(data.get("entities", {}).keys())
+    except Exception:
+        return None
+
+
+def validate_entity_type(entity_type: str) -> None:
+    """Raise 400 if entity_type is not in the workspace schema."""
+    valid_types = get_schema_entity_types()
+    if valid_types is not None and entity_type not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown entity type '{entity_type}'. Valid types: {valid_types}",
+        )
+
+
 def parse_frontmatter(content: str) -> tuple[dict, str]:
     """Parse YAML frontmatter from markdown content."""
     if not content.startswith('---'):
@@ -541,6 +564,32 @@ async def list_entities(entity_type: str) -> list[EntityListItem]:
     return sorted(entities, key=lambda e: e.title.lower())
 
 
+@app.get("/export/docx/{entity_type}/{entity_id:path}")
+async def export_entity_docx(entity_type: str, entity_id: str):
+    """Export an entity as a DOCX file."""
+    workspace = Path(get_workspace_path())
+    entity_path = workspace / entity_type.replace('::', '/') / f"{entity_id}.md"
+
+    if not entity_path.exists():
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    content = entity_path.read_text()
+    frontmatter, body = parse_frontmatter(content)
+    title = frontmatter.get('title', entity_id.replace('-', ' ').replace('_', ' ').title())
+
+    from .docx_export import markdown_to_docx
+    docx_bytes = markdown_to_docx(body, title=title)
+
+    safe_title = re.sub(r'[^\w\s-]', '', title).strip()
+    filename = f"{safe_title}.docx"
+
+    return StreamingResponse(
+        iter([docx_bytes]),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/entities/{entity_type}/{entity_id:path}")
 async def get_entity(entity_type: str, entity_id: str) -> Entity:
     """Get a specific entity."""
@@ -566,6 +615,7 @@ async def get_entity(entity_type: str, entity_id: str) -> Entity:
 @app.post("/entities/{entity_type}")
 async def create_entity(entity_type: str, request: CreateEntityRequest) -> Entity:
     """Create a new entity."""
+    validate_entity_type(entity_type)
     workspace = Path(get_workspace_path())
     type_dir = workspace / entity_type.replace('::', '/')
     type_dir.mkdir(parents=True, exist_ok=True)
@@ -807,9 +857,15 @@ async def delete_session(session_id: str):
 
 # ============== Slack-like Async Chat Endpoints ==============
 
+class MessageContext(BaseModel):
+    """Page context sent with a message."""
+    currentView: str | None = None
+    currentEntity: dict | None = None  # {type, id, title}
+
 class SendMessageRequest(BaseModel):
     """Request to send a message (fire-and-forget)."""
     message: str
+    context: MessageContext | None = None
 
 
 class SendMessageResponse(BaseModel):
@@ -836,8 +892,9 @@ async def send_message(session_id: str, request: SendMessageRequest):
     # Generate message ID
     message_id = f"msg-{uuid.uuid4().hex[:12]}"
 
-    # Queue the message
-    await event_bus.queue_message(session_id, request.message)
+    # Queue the message with context
+    ctx = request.context.model_dump() if request.context else None
+    await event_bus.queue_message(session_id, request.message, ctx)
 
     # Publish user_message event to subscribers
     await event_bus.publish(session_id, SessionEvent(
@@ -877,9 +934,41 @@ async def _process_session_messages(session_id: str, workspace_path: str):
 
         while True:
             # Get next message from queue
-            message = await event_bus.get_next_message(session_id)
-            if message is None:
+            result = await event_bus.get_next_message(session_id)
+            if result is None:
                 break  # No more messages
+
+            message, context = result
+
+            # Build attached_entities from page context
+            attached_entities = None
+            if context and context.get("currentEntity"):
+                entity_info = context["currentEntity"]
+                entity_type = entity_info.get("type")
+                entity_id = entity_info.get("id")
+                entity_title = entity_info.get("title", "Untitled")
+
+                if entity_type and entity_id:
+                    # Load entity content from workspace
+                    entity_path = Path(workspace_path) / entity_type / f"{entity_id}.md"
+                    entity_content = ""
+                    if entity_path.exists():
+                        entity_content = entity_path.read_text()
+                    attached_entities = [{
+                        "type": entity_type,
+                        "id": entity_id,
+                        "title": entity_title,
+                        "content": entity_content,
+                    }]
+            elif context and context.get("currentView"):
+                # Just note what section the user is viewing
+                view = context["currentView"]
+                attached_entities = [{
+                    "type": "navigation",
+                    "id": view,
+                    "title": f"User is currently viewing: {view}",
+                    "content": "",
+                }]
 
             # Publish processing_start event
             await event_bus.publish(session_id, SessionEvent(
@@ -894,6 +983,7 @@ async def _process_session_messages(session_id: str, workspace_path: str):
                     message=message,
                     workspace_path=workspace_path,
                     session_id=sdk_session_id,  # None for new sessions, SDK creates its own ID
+                    attached_entities=attached_entities,
                 ):
                     event_type = type(event).__name__
 
@@ -1185,8 +1275,34 @@ async def upload_library_file(file: UploadFile = File(...)) -> LibraryFileRespon
         content_type=content_type,
     )
 
-    # Process the file synchronously (extract content, create entity)
+    # Process the file synchronously (extract content)
     library_file = manager.process_file(file_id)
+
+    # Run AI analysis and create workspace entity
+    if library_file.status == "complete":
+        try:
+            from .librarian import LibraryIndex, DocumentAnalyzer
+            index = LibraryIndex(workspace)
+            extracted = manager.get_extracted_content(file_id)
+            if extracted:
+                analyzer = DocumentAnalyzer()
+                doc = analyzer.analyze_and_index(file_id, extracted, file.filename, index)
+
+                # Create workspace entity from analyzed content
+                entity_type = "documents"
+                entity_id = manager._create_entity(
+                    entity_type=entity_type,
+                    title=doc.title,
+                    content=extracted,
+                    source_file=file_id,
+                    source_filename=file.filename,
+                )
+                manager._update_file_entity(file_id, entity_type, entity_id)
+                library_file = manager.get_file(file_id)
+        except Exception as e:
+            # Don't fail the upload if analysis fails - file is still usable
+            import logging
+            logging.getLogger(__name__).warning(f"Library analysis failed for {file_id}: {e}")
 
     # Commit to git
     git_commit(Path(workspace), f"Library: upload {file.filename}")
@@ -1235,6 +1351,150 @@ async def retry_library_file(file_id: str) -> LibraryFileResponse:
     git_commit(Path(workspace), f"Library: retry {library_file.filename}")
 
     return _library_file_to_response(library_file)
+
+
+# ============== Library Topic Endpoints ==============
+
+class TopicResponse(BaseModel):
+    """Topic summary for API."""
+    id: str
+    name: str
+    description: str
+    document_count: int
+
+
+class TopicDocumentResponse(BaseModel):
+    """Document info within a topic detail."""
+    id: str
+    title: str
+    doc_type: str
+    summary: str
+
+
+class TopicDetailResponse(BaseModel):
+    """Detailed topic info with documents."""
+    id: str
+    name: str
+    description: str
+    document_count: int
+    documents: list[TopicDocumentResponse]
+
+
+@app.get("/library/topics")
+async def list_topics() -> list[TopicResponse]:
+    """List all topics with document counts."""
+    workspace = get_workspace_path()
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    topics = index.list_topics()
+
+    return [
+        TopicResponse(
+            id=t.id,
+            name=t.name,
+            description=t.description,
+            document_count=t.document_count,
+        )
+        for t in topics
+    ]
+
+
+@app.get("/library/topics/{topic_id}")
+async def get_topic(topic_id: str) -> TopicDetailResponse:
+    """Get a topic with its documents."""
+    workspace = get_workspace_path()
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    topic = index.get_topic(topic_id)
+
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    # Get documents for this topic
+    docs = index.list_documents(topic_filter=[topic_id])
+
+    return TopicDetailResponse(
+        id=topic.id,
+        name=topic.name,
+        description=topic.description,
+        document_count=topic.document_count,
+        documents=[
+            TopicDocumentResponse(
+                id=d.id,
+                title=d.title,
+                doc_type=d.doc_type,
+                summary=d.summaries.brief,
+            )
+            for d in docs
+        ],
+    )
+
+
+@app.post("/library/reindex")
+async def reindex_library():
+    """Re-run AI analysis on all completed library files that lack index data.
+
+    This generates summaries and topics for files that were uploaded
+    before the analysis step was added.
+    """
+    workspace = get_workspace_path()
+    manager = LibraryManager(workspace)
+
+    from .librarian import LibraryIndex, DocumentAnalyzer
+    index = LibraryIndex(workspace)
+    analyzer = DocumentAnalyzer()
+
+    files = manager.list_files()
+    results = {"indexed": 0, "skipped": 0, "failed": 0, "errors": []}
+
+    for lib_file in files:
+        if lib_file.status != "complete":
+            results["skipped"] += 1
+            continue
+
+        # Get extracted content
+        extracted = manager.get_extracted_content(lib_file.id)
+        if not extracted:
+            results["skipped"] += 1
+            continue
+
+        # Check if already indexed (has summaries)
+        existing = index.get_document(lib_file.id)
+        needs_analysis = not existing or not existing.summaries.brief
+        needs_entity = not lib_file.entity_id
+
+        if not needs_analysis and not needs_entity:
+            results["skipped"] += 1
+            continue
+
+        try:
+            if needs_analysis:
+                doc = analyzer.analyze_and_index(lib_file.id, extracted, lib_file.filename, index)
+            else:
+                doc = existing
+
+            # Create workspace entity if missing
+            if needs_entity and doc:
+                entity_type = "documents"
+                entity_id = manager._create_entity(
+                    entity_type=entity_type,
+                    title=doc.title,
+                    content=extracted,
+                    source_file=lib_file.id,
+                    source_filename=lib_file.filename,
+                )
+                manager._update_file_entity(lib_file.id, entity_type, entity_id)
+
+            results["indexed"] += 1
+        except Exception as e:
+            results["failed"] += 1
+            results["errors"].append({"file_id": lib_file.id, "filename": lib_file.filename, "error": str(e)})
+
+    # Commit to git
+    if results["indexed"] > 0:
+        git_commit(Path(workspace), f"Library: reindex {results['indexed']} files")
+
+    return results
 
 
 @app.post("/library/infer-schema")

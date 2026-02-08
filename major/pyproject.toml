@@ -14,6 +14,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "openai>=1.0.0",
     "anthropic>=0.40.0",
+    "python-docx>=0.8.11",
 ]
 
 [project.scripts]

@@ -620,6 +620,14 @@ class LibraryManager:
             if entity_path.exists():
                 entity_path.unlink()
 
+        # Remove from catalog index (summaries, topics)
+        try:
+            from major.librarian import Librarian
+            librarian = Librarian(self.workspace)
+            librarian.remove_document(file_id)
+        except Exception:
+            pass  # Catalog may not exist yet
+
         # Delete file directory
         file_dir = self.files_dir / file_id
         if file_dir.exists():
