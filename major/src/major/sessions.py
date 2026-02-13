@@ -32,6 +32,7 @@ class SessionMetadata:
     project_id: str | None = None
     entity_type: str | None = None  # For sessions linked to entities (e.g., "handoffs")
     entity_id: str | None = None    # For sessions linked to entities (e.g., "handoff-foo")
+    source_ids: list[str] | None = None  # For source-grounded chat sessions
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
@@ -161,6 +162,7 @@ class SessionManager:
                 project_id=meta.get('project_id'),
                 entity_type=session_entity_type,
                 entity_id=meta.get('entity_id'),
+                source_ids=meta.get('source_ids'),
                 created_at=meta.get('created_at', datetime.utcnow().isoformat()),
                 updated_at=meta.get('updated_at', datetime.utcnow().isoformat()),
             )
@@ -190,6 +192,7 @@ class SessionManager:
             project_id=meta.get('project_id') if meta else None,
             entity_type=meta.get('entity_type') if meta else None,
             entity_id=meta.get('entity_id') if meta else None,
+            source_ids=meta.get('source_ids') if meta else None,
             created_at=meta.get('created_at', datetime.utcnow().isoformat()) if meta else datetime.utcnow().isoformat(),
             updated_at=meta.get('updated_at', datetime.utcnow().isoformat()) if meta else datetime.utcnow().isoformat(),
         )
@@ -203,6 +206,7 @@ class SessionManager:
         project_id: str | None = None,
         entity_type: str | None = None,
         entity_id: str | None = None,
+        source_ids: list[str] | None = None,
     ) -> SessionMetadata:
         """Update session metadata."""
         metadata = self._load_metadata(workspace_path)
@@ -222,6 +226,8 @@ class SessionManager:
             metadata[session_id]['entity_type'] = entity_type
         if entity_id is not None:
             metadata[session_id]['entity_id'] = entity_id
+        if source_ids is not None:
+            metadata[session_id]['source_ids'] = source_ids
 
         metadata[session_id]['updated_at'] = datetime.utcnow().isoformat()
         metadata[session_id]['workspace_path'] = workspace_path

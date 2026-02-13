@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import yaml
 import frontmatter
 from claude_agent_sdk import tool, create_sdk_mcp_server
 
@@ -171,9 +172,79 @@ def create_major_tools(workspace_path: str):
             logger.exception(f"Error in list_skills: {e}")
             return {"content": [{"type": "text", "text": f"Error: {e}"}]}
 
+    schema_path = workspace / ".claude" / "schema.yaml"
+
+    @tool(
+        name="get_workflow",
+        description=(
+            "Get the current production workflow for this workspace. "
+            "Returns the ordered list of entity types that define the knowledge production pipeline. "
+            "Returns null if no workflow is configured."
+        ),
+        input_schema={}
+    )
+    async def get_workflow(args: dict[str, Any]) -> dict:
+        """Get the current workflow from schema.yaml."""
+        try:
+            if not schema_path.exists():
+                return {"content": [{"type": "text", "text": "No schema.yaml found — workflow not configured."}]}
+
+            data = yaml.safe_load(schema_path.read_text()) or {}
+            workflow = data.get("workflow")
+            if not workflow or not isinstance(workflow, list):
+                return {"content": [{"type": "text", "text": "No workflow configured in schema.yaml."}]}
+
+            lines = ["# Current Workflow\n"]
+            for i, stage in enumerate(workflow, 1):
+                entity = data.get("entities", {}).get(stage, {})
+                desc = entity.get("description", "")
+                lines.append(f"{i}. **{stage}**{f' — {desc}' if desc else ''}")
+
+            return {"content": [{"type": "text", "text": "\n".join(lines)}]}
+        except Exception as e:
+            logger.exception(f"Error in get_workflow: {e}")
+            return {"content": [{"type": "text", "text": f"Error: {e}"}]}
+
+    @tool(
+        name="update_workflow",
+        description=(
+            "Update the production workflow order. "
+            "Provide the new ordered list of entity type names. "
+            "All names must be valid entity types defined in the schema. "
+            "Use this when the user wants to reorder, add, or remove stages from the pipeline."
+        ),
+        input_schema={
+            "workflow": list[str],
+        }
+    )
+    async def update_workflow(args: dict[str, Any]) -> dict:
+        """Update the workflow in schema.yaml."""
+        try:
+            if not schema_path.exists():
+                return {"content": [{"type": "text", "text": "Error: No schema.yaml found."}]}
+
+            new_workflow = args.get("workflow", [])
+            if not new_workflow or not isinstance(new_workflow, list):
+                return {"content": [{"type": "text", "text": "Error: workflow must be a non-empty list of entity type names."}]}
+
+            data = yaml.safe_load(schema_path.read_text()) or {}
+            entity_names = set(data.get("entities", {}).keys())
+
+            invalid = [w for w in new_workflow if w not in entity_names]
+            if invalid:
+                return {"content": [{"type": "text", "text": f"Error: Invalid entity types: {invalid}. Valid types: {sorted(entity_names)}"}]}
+
+            data["workflow"] = new_workflow
+            schema_path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True))
+
+            return {"content": [{"type": "text", "text": f"Workflow updated: {' → '.join(new_workflow)}"}]}
+        except Exception as e:
+            logger.exception(f"Error in update_workflow: {e}")
+            return {"content": [{"type": "text", "text": f"Error: {e}"}]}
+
     # Create and return the SDK MCP server
     return create_sdk_mcp_server(
         name="major-tools",
         version="0.1.0",
-        tools=[generate_report, list_skills]
+        tools=[generate_report, list_skills, get_workflow, update_workflow]
     )

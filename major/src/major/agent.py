@@ -88,6 +88,7 @@ class MajorAgent:
         on_ask_user: Callable[[AskUserQuestionEvent], Awaitable[dict[str, str]]] | None = None,
         user_context: dict[str, str] | None = None,
         image_urls: list[str] | None = None,
+        source_constraint: list[dict] | None = None,
     ) -> AsyncGenerator[SDKMessage, None]:
         """Send a message and yield SDK events.
 
@@ -102,6 +103,8 @@ class MajorAgent:
             user_context: Optional user context dict to inject into MCP servers.
                          Keys like 'clerk_id' become env vars like CLERK_ID.
             image_urls: Optional list of image URLs to include in the message.
+            source_constraint: Optional list of source dicts for source-grounded chat.
+                              Each dict has 'title' and 'content' keys.
 
         Yields:
             Raw SDK messages (SystemMessage, AssistantMessage, UserMessage,
@@ -127,11 +130,12 @@ class MajorAgent:
             attached_entities=attached_entities,
             platform_config_path=self.config.platform_config_path,
             workspace_path=workspace,
+            source_constraint=source_constraint,
         )
 
         # Build explicit tool list - only safe tools + MCP tools
         # Write and Edit are excluded to force entity creation through Batou
-        tools = ['Read', 'Glob', 'Grep', 'Bash']
+        tools = ['Read', 'Glob', 'Grep', 'Bash', 'WebSearch', 'WebFetch']
         if on_ask_user:
             tools.append('AskUserQuestion')
         # Add MCP tool wildcards so they're exposed to the model

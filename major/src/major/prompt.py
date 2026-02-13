@@ -84,6 +84,7 @@ def build_system_prompt(
     attached_entities: list[dict] | None = None,
     platform_config_path: str | None = None,
     workspace_path: str | None = None,
+    source_constraint: list[dict] | None = None,
 ) -> str:
     """Build system prompt with app-level and workspace-level context.
 
@@ -124,7 +125,20 @@ def build_system_prompt(
             prompt += workspace_context
             prompt += "\n\n"
 
-    # 3. Append attached entities
+    # 3. Append source constraint (for source-grounded chat)
+    if source_constraint:
+        prompt += "## Source-Grounded Chat\n\n"
+        prompt += "This conversation is grounded in the following sources. "
+        prompt += "Base your answers on these sources and cite them by title when referencing specific information. "
+        prompt += "If the user asks about something not covered in these sources, say so.\n\n"
+
+        for source in source_constraint:
+            prompt += f"### {source.get('title', 'Untitled')}\n"
+            if source.get('content'):
+                prompt += f"{source['content']}\n\n"
+            prompt += "---\n\n"
+
+    # 4. Append attached entities
     if attached_entities:
         prompt += "## Attached Documents\n\n"
         prompt += "The user has attached the following documents to this session. "

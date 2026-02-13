@@ -12,11 +12,15 @@ Storage layout:
 """
 
 import json
+import os
 import re
+import uuid as _uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
+
+import yaml
 
 # Anthropic for Haiku analysis
 try:
@@ -101,6 +105,46 @@ class Topic:
         return cls(**data)
 
 
+@dataclass
+class InsightItem:
+    """A cross-document observation generated during reindex."""
+    id: str                    # uuid hex
+    type: str                  # "contradiction" | "connection" | "gap" | "consolidation"
+    title: str                 # Short summary
+    description: str           # Detailed observation
+    source_ids: list[str]      # Document IDs involved
+    source_titles: list[str]   # Human-readable titles
+    status: str                # "new" | "dismissed" | "saved" | "actioned"
+    created_at: str            # ISO timestamp
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "InsightItem":
+        return cls(**data)
+
+
+@dataclass
+class Notebook:
+    """A curated collection of sources with chat, audio, and summary capabilities."""
+    id: str                    # uuid hex
+    title: str
+    source_ids: list[str]      # topic IDs, doc IDs, entity:* IDs
+    source_labels: list[str]   # human-readable names
+    chat_session_id: str | None = None
+    audio_generation_ids: list[str] = field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Notebook":
+        return cls(**data)
+
+
 SummaryLevel = Literal["brief", "standard", "detailed"]
 
 
@@ -145,6 +189,125 @@ class LibraryIndex:
         """Save the topic index."""
         data = {k: v.to_dict() for k, v in topics.items()}
         self.topics_path.write_text(json.dumps(data, indent=2))
+
+    # Insight operations
+
+    def _load_insights(self) -> list[InsightItem]:
+        """Load insights from JSON file."""
+        insights_path = self.index_dir / "insights.json"
+        if not insights_path.exists():
+            return []
+        try:
+            data = json.loads(insights_path.read_text())
+            return [InsightItem.from_dict(item) for item in data]
+        except (json.JSONDecodeError, KeyError):
+            return []
+
+    def _save_insights(self, items: list[InsightItem]):
+        """Save insights to JSON file."""
+        insights_path = self.index_dir / "insights.json"
+        data = [item.to_dict() for item in items]
+        insights_path.write_text(json.dumps(data, indent=2))
+
+    def add_insights(self, items: list[InsightItem]):
+        """Append insights, deduplicating by title."""
+        existing = self._load_insights()
+        existing_titles = {item.title for item in existing}
+        for item in items:
+            if item.title not in existing_titles:
+                existing.append(item)
+                existing_titles.add(item.title)
+        self._save_insights(existing)
+
+    def list_insights(self, status_filter: str | None = None) -> list[InsightItem]:
+        """List insights with optional status filter."""
+        items = self._load_insights()
+        if status_filter:
+            items = [i for i in items if i.status == status_filter]
+        return items
+
+    def get_insight_count(self, status: str = "new") -> int:
+        """Get count of insights with given status."""
+        return len([i for i in self._load_insights() if i.status == status])
+
+    def update_insight(self, insight_id: str, status: str) -> InsightItem | None:
+        """Update an insight's status. Returns updated item or None."""
+        items = self._load_insights()
+        for item in items:
+            if item.id == insight_id:
+                item.status = status
+                self._save_insights(items)
+                return item
+        return None
+
+    # Notebook operations
+
+    def _load_notebooks(self) -> dict[str, Notebook]:
+        """Load notebooks from JSON file."""
+        notebooks_path = self.index_dir / "notebooks.json"
+        if not notebooks_path.exists():
+            return {}
+        try:
+            data = json.loads(notebooks_path.read_text())
+            return {k: Notebook.from_dict(v) for k, v in data.items()}
+        except (json.JSONDecodeError, KeyError):
+            return {}
+
+    def _save_notebooks(self, notebooks: dict[str, Notebook]):
+        """Save notebooks to JSON file."""
+        data = {k: v.to_dict() for k, v in notebooks.items()}
+        notebooks_path = self.index_dir / "notebooks.json"
+        notebooks_path.write_text(json.dumps(data, indent=2))
+
+    def list_notebooks(self) -> list[Notebook]:
+        """List all notebooks, sorted by updated_at descending."""
+        notebooks = self._load_notebooks()
+        result = list(notebooks.values())
+        result.sort(key=lambda n: n.updated_at, reverse=True)
+        return result
+
+    def get_notebook(self, notebook_id: str) -> Notebook | None:
+        """Get a notebook by ID."""
+        notebooks = self._load_notebooks()
+        return notebooks.get(notebook_id)
+
+    def create_notebook(self, title: str, source_ids: list[str], source_labels: list[str]) -> Notebook:
+        """Create a new notebook."""
+        now = datetime.utcnow().isoformat()
+        notebook = Notebook(
+            id=_uuid.uuid4().hex,
+            title=title,
+            source_ids=source_ids,
+            source_labels=source_labels,
+            created_at=now,
+            updated_at=now,
+        )
+        notebooks = self._load_notebooks()
+        notebooks[notebook.id] = notebook
+        self._save_notebooks(notebooks)
+        return notebook
+
+    def update_notebook(self, notebook_id: str, **kwargs) -> Notebook | None:
+        """Update a notebook's fields. Returns updated notebook or None."""
+        notebooks = self._load_notebooks()
+        notebook = notebooks.get(notebook_id)
+        if not notebook:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(notebook, key):
+                setattr(notebook, key, value)
+        notebook.updated_at = datetime.utcnow().isoformat()
+        self._save_notebooks(notebooks)
+        return notebook
+
+    def delete_notebook(self, notebook_id: str) -> bool:
+        """Delete a notebook. Returns True if deleted."""
+        notebooks = self._load_notebooks()
+        if notebook_id not in notebooks:
+            return False
+        del notebooks[notebook_id]
+        self._save_notebooks(notebooks)
+        return True
 
     # Document operations
 
@@ -263,6 +426,215 @@ class LibraryIndex:
 
         self._save_topics(topics)
 
+    # Entity indexing
+
+    def _load_entity_meta(self) -> dict:
+        """Load entity index metadata (timestamps for incremental indexing)."""
+        meta_path = self.index_dir / "entity_index_meta.json"
+        if not meta_path.exists():
+            return {}
+        try:
+            return json.loads(meta_path.read_text())
+        except (json.JSONDecodeError, KeyError):
+            return {}
+
+    def _save_entity_meta(self, meta: dict):
+        """Save entity index metadata."""
+        meta_path = self.index_dir / "entity_index_meta.json"
+        meta_path.write_text(json.dumps(meta, indent=2))
+
+    def index_entities(self, analyzer: "DocumentAnalyzer") -> dict:
+        """Scan workspace entities and index new/changed ones.
+
+        Reads entity types from .claude/schema.yaml, walks each type's
+        directory for .md files, and runs AI analysis on new/changed entities.
+
+        Args:
+            analyzer: DocumentAnalyzer instance for AI analysis
+
+        Returns:
+            Dict with keys: indexed, skipped, failed, errors
+        """
+        results = {"indexed": 0, "skipped": 0, "failed": 0, "errors": []}
+
+        # Read schema to get entity types
+        schema_path = self.workspace / ".claude" / "schema.yaml"
+        if not schema_path.exists():
+            return results
+
+        try:
+            schema = yaml.safe_load(schema_path.read_text()) or {}
+        except yaml.YAMLError:
+            return results
+
+        entities_config = schema.get("entities", {})
+        if not entities_config:
+            return results
+
+        # Load mtime tracking metadata
+        meta = self._load_entity_meta()
+        entity_mtimes = meta.get("entity_mtimes", {})
+
+        documents = self._load_documents()
+        seen_entity_ids = set()
+
+        for entity_type, config in entities_config.items():
+            directory = config.get("directory", entity_type)
+            type_dir = self.workspace / directory
+
+            if not type_dir.is_dir():
+                continue
+
+            for md_file in type_dir.glob("*.md"):
+                entity_id = md_file.stem
+                doc_id = f"entity:{directory}/{entity_id}"
+                seen_entity_ids.add(doc_id)
+
+                # Check mtime for incremental indexing
+                file_mtime = os.path.getmtime(md_file)
+                last_mtime = entity_mtimes.get(doc_id, 0)
+
+                if doc_id in documents and file_mtime <= last_mtime:
+                    results["skipped"] += 1
+                    continue
+
+                try:
+                    # Read and parse entity file
+                    text = md_file.read_text()
+                    body = text
+                    if text.startswith("---"):
+                        end = text.find("---", 3)
+                        if end != -1:
+                            body = text[end + 3:].lstrip("\n")
+
+                    if not body.strip():
+                        results["skipped"] += 1
+                        continue
+
+                    # Run AI analysis
+                    analysis = analyzer.analyze(body, md_file.name)
+
+                    # Create/find topics
+                    topic_ids = []
+                    for topic_name in analysis["topics"]:
+                        topic = self.find_or_create_topic(topic_name)
+                        topic_ids.append(topic.id)
+
+                    # Create indexed document
+                    doc = IndexedDocument(
+                        id=doc_id,
+                        source_path=f"{directory}/{entity_id}.md",
+                        title=analysis["title"],
+                        doc_type=analysis["doc_type"],
+                        summaries=DocumentSummaries(
+                            brief=analysis["summaries"]["brief"],
+                            standard=analysis["summaries"]["standard"],
+                            detailed=analysis["summaries"]["detailed"],
+                        ),
+                        topics=topic_ids,
+                        metadata=DocumentMetadata(
+                            created=datetime.utcnow().isoformat(),
+                            modified=datetime.utcnow().isoformat(),
+                            word_count=analysis["word_count"],
+                            source_filename=md_file.name,
+                        ),
+                    )
+
+                    documents[doc_id] = doc
+                    entity_mtimes[doc_id] = file_mtime
+                    results["indexed"] += 1
+
+                except Exception as e:
+                    results["failed"] += 1
+                    results["errors"].append({
+                        "file_id": doc_id,
+                        "filename": md_file.name,
+                        "error": str(e),
+                    })
+
+        # Clean up stale entries for deleted entities
+        stale_ids = [
+            did for did in documents
+            if did.startswith("entity:") and did not in seen_entity_ids
+        ]
+        for stale_id in stale_ids:
+            del documents[stale_id]
+            entity_mtimes.pop(stale_id, None)
+
+        # Save all at once
+        self._save_documents(documents)
+        self._update_topic_counts()
+        self._save_entity_meta({"entity_mtimes": entity_mtimes})
+
+        return results
+
+    # Topic summaries
+
+    def get_topic_summary(self, topic_id: str) -> dict | None:
+        """Get a cached collection summary for a topic, generating on miss.
+
+        Returns:
+            Dict with keys: overview, themes, key_findings, connections
+            or None if topic not found
+        """
+        topic = self.get_topic(topic_id)
+        if not topic:
+            return None
+
+        # Check cache
+        summaries_path = self.index_dir / "topic_summaries.json"
+        cache = {}
+        if summaries_path.exists():
+            try:
+                cache = json.loads(summaries_path.read_text())
+            except (json.JSONDecodeError, KeyError):
+                cache = {}
+
+        if topic_id in cache:
+            return cache[topic_id]
+
+        # Generate on miss
+        docs = self.list_documents(topic_filter=[topic_id])
+        if not docs:
+            return None
+
+        # Gather document summaries for input
+        doc_summaries = []
+        for doc in docs:
+            doc_summaries.append({
+                "title": doc.title,
+                "summary": doc.summaries.standard,
+            })
+
+        try:
+            analyzer = DocumentAnalyzer()
+            summary = analyzer.summarize_collection(doc_summaries, topic.name)
+
+            # Cache result
+            cache[topic_id] = summary
+            summaries_path.write_text(json.dumps(cache, indent=2))
+
+            return summary
+        except Exception:
+            return None
+
+    def regenerate_topic_summary(self, topic_id: str) -> dict | None:
+        """Force regenerate a topic summary (invalidates cache)."""
+        summaries_path = self.index_dir / "topic_summaries.json"
+        cache = {}
+        if summaries_path.exists():
+            try:
+                cache = json.loads(summaries_path.read_text())
+            except (json.JSONDecodeError, KeyError):
+                cache = {}
+
+        # Remove cached entry
+        cache.pop(topic_id, None)
+        summaries_path.write_text(json.dumps(cache, indent=2))
+
+        # Regenerate
+        return self.get_topic_summary(topic_id)
+
     # Search operations
 
     def find_documents(
@@ -346,7 +718,9 @@ class LibraryIndex:
     def get_document_content(self, doc_id: str) -> str | None:
         """Get the full extracted content of a document.
 
-        Reads from the library file storage, not the index.
+        For library files, reads from .library/files/{id}/extracted.txt.
+        For entities (id starts with 'entity:'), reads from {type}/{id}.md
+        and strips frontmatter.
 
         Args:
             doc_id: Document ID
@@ -354,7 +728,21 @@ class LibraryIndex:
         Returns:
             Full document content, or None if not found
         """
-        # Content is stored in .library/files/{id}/extracted.txt
+        if doc_id.startswith("entity:"):
+            # Entity content: read from {type}/{id}.md
+            entity_path = doc_id[len("entity:"):]  # e.g. "notes/my-note"
+            content_path = self.workspace / f"{entity_path}.md"
+            if content_path.exists():
+                text = content_path.read_text()
+                # Strip YAML frontmatter
+                if text.startswith("---"):
+                    end = text.find("---", 3)
+                    if end != -1:
+                        text = text[end + 3:].lstrip("\n")
+                return text
+            return None
+
+        # Library file content: stored in .library/files/{id}/extracted.txt
         content_path = self.workspace / ".library" / "files" / doc_id / "extracted.txt"
         if content_path.exists():
             return content_path.read_text()
@@ -460,6 +848,138 @@ Return ONLY valid JSON, no other text."""
             "topics": data.get("topics", []),
             "word_count": word_count,
         }
+
+    def summarize_collection(
+        self,
+        doc_summaries: list[dict],
+        collection_name: str,
+    ) -> dict:
+        """Synthesize a collection-level summary across multiple documents.
+
+        Args:
+            doc_summaries: List of dicts with 'title' and 'summary' keys
+            collection_name: Name of the topic/collection
+
+        Returns:
+            Dict with keys: overview, themes, key_findings, connections
+        """
+        docs_text = "\n\n".join(
+            f"**{d['title']}**: {d['summary']}" for d in doc_summaries
+        )
+
+        prompt = f"""Analyze these documents that are grouped under the topic "{collection_name}" and return a JSON object synthesizing them:
+
+{{
+  "overview": "2-3 sentence overview of what this collection covers",
+  "themes": ["list", "of", "common", "themes"],
+  "key_findings": ["Key finding or insight 1", "Key finding or insight 2", "..."],
+  "connections": "1-2 sentences about how these documents relate to each other"
+}}
+
+Documents:
+{docs_text}
+
+Return ONLY valid JSON, no other text."""
+
+        response = self.client.messages.create(
+            model=self.MODEL,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        text = response.content[0].text
+
+        # Extract JSON
+        if "```json" in text:
+            start = text.find("```json") + 7
+            end = text.find("```", start)
+            text = text[start:end]
+        elif "```" in text:
+            start = text.find("```") + 3
+            end = text.find("```", start)
+            text = text[start:end]
+
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start == -1 or end == 0:
+            raise ValueError("No JSON found in collection summary response")
+
+        data = json.loads(text[start:end], strict=False)
+
+        return {
+            "overview": data.get("overview", ""),
+            "themes": data.get("themes", []),
+            "key_findings": data.get("key_findings", []),
+            "connections": data.get("connections", ""),
+        }
+
+    def generate_insights(self, documents: list[dict]) -> list[dict]:
+        """Generate cross-document insights from document briefs.
+
+        Args:
+            documents: List of dicts with 'id', 'title', and 'brief' keys
+
+        Returns:
+            List of insight dicts with type, title, description, source_ids, source_titles
+        """
+        if not documents or len(documents) < 2:
+            return []
+
+        # Build document briefs text, truncated to stay within context
+        docs_text = "\n".join(
+            f"- [{d['id']}] \"{d['title']}\": {d['brief']}"
+            for d in documents
+        )[:30000]
+
+        prompt = f"""You are analyzing a library of {len(documents)} documents. Identify cross-document observations.
+
+Return a JSON array of insight objects. Each insight should be one of these types:
+- "contradiction": Two or more sources disagree on a factual claim or recommendation
+- "connection": A surprising or non-obvious link between documents on different topics
+- "gap": An important question or area that the documents raise but don't answer
+- "consolidation": Multiple documents cover overlapping ground and could be merged or summarized together
+
+For each insight:
+{{
+  "type": "contradiction|connection|gap|consolidation",
+  "title": "Short summary (under 80 chars)",
+  "description": "2-3 sentence detailed observation",
+  "source_ids": ["id1", "id2"],
+  "source_titles": ["Title 1", "Title 2"]
+}}
+
+Generate 3-8 insights. Focus on the most interesting and actionable observations. Only use document IDs and titles from the list below.
+
+Documents:
+{docs_text}
+
+Return ONLY a valid JSON array, no other text."""
+
+        response = self.client.messages.create(
+            model=self.MODEL,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        text = response.content[0].text
+
+        # Extract JSON array
+        if "```json" in text:
+            start = text.find("```json") + 7
+            end = text.find("```", start)
+            text = text[start:end]
+        elif "```" in text:
+            start = text.find("```") + 3
+            end = text.find("```", start)
+            text = text[start:end]
+
+        start = text.find("[")
+        end = text.rfind("]") + 1
+        if start == -1 or end == 0:
+            return []
+
+        data = json.loads(text[start:end], strict=False)
+        return data if isinstance(data, list) else []
 
     def analyze_and_index(
         self,

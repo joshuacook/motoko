@@ -15,7 +15,7 @@ from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
 from .library import LibraryManager, LibraryFile as LibraryFileModel, get_content_type, is_supported_file
@@ -194,6 +194,7 @@ class ChatRequest(BaseModel):
     """Chat request."""
     message: str
     session_id: str | None = None
+    context: dict | None = None  # {currentView, currentEntity, sourceIds}
 
 
 class ChatResponse(BaseModel):
@@ -215,61 +216,100 @@ async def chat(request: ChatRequest):
 
     agent = get_agent()
 
+    # Build source constraint from context
+    source_constraint = None
+    if request.context and request.context.get("sourceIds"):
+        from .librarian import LibraryIndex
+        lib_index = LibraryIndex(workspace_path)
+        source_constraint = []
+        total_chars = 0
+        max_budget = 60000
+        for sid in request.context["sourceIds"]:
+            if sid == "*":
+                docs = lib_index.list_documents()
+            elif lib_index.get_topic(sid):
+                docs = lib_index.list_documents(topic_filter=[sid])
+            else:
+                doc = lib_index.get_document(sid)
+                docs = [doc] if doc else []
+
+            for doc in docs:
+                if total_chars >= max_budget:
+                    break
+                content = lib_index.get_document_content(doc.id)
+                if content:
+                    truncated = content[:min(15000, max_budget - total_chars)]
+                    source_constraint.append({
+                        "title": doc.title,
+                        "content": truncated,
+                    })
+                    total_chars += len(truncated)
+            if total_chars >= max_budget:
+                break
+
     async def generate() -> AsyncGenerator[str, None]:
         """Generate SSE events from agent."""
+        import logging
+        logger = logging.getLogger(__name__)
         current_text = ""
         session_id = request.session_id
         sent_session_start = False
 
-        async for event in agent.send_message(
-            message=request.message,
-            workspace_path=workspace_path,
-            session_id=session_id,
-        ):
-            # Handle different event types
-            event_type = type(event).__name__
+        logger.info(f"[chat] source_constraint: {len(source_constraint) if source_constraint else 0} docs, session_id={session_id}")
+        try:
+            async for event in agent.send_message(
+                message=request.message,
+                workspace_path=workspace_path,
+                session_id=session_id,
+                source_constraint=source_constraint,
+            ):
+                # Handle different event types
+                event_type = type(event).__name__
 
-            if event_type == "AssistantMessage":
-                # Extract text content
-                if hasattr(event, "content"):
-                    for block in event.content:
-                        if hasattr(block, "text"):
-                            delta = block.text[len(current_text):]
-                            if delta:
-                                current_text = block.text
-                                yield f"data: {json.dumps({'type': 'text_delta', 'text': delta})}\n\n"
-                        # Check for tool use blocks
-                        if hasattr(block, "type") and block.type == "tool_use":
-                            tool_name = getattr(block, "name", "unknown")
-                            yield f"data: {json.dumps({'type': 'tool_use', 'tool': tool_name, 'status': 'running'})}\n\n"
-
-            elif event_type == "StreamEvent":
-                # Raw stream event
-                if hasattr(event, "type"):
-                    if event.type == "content_block_delta":
-                        if hasattr(event, "delta") and hasattr(event.delta, "text"):
-                            yield f"data: {json.dumps({'type': 'text_delta', 'text': event.delta.text})}\n\n"
-                    elif event.type == "content_block_start":
-                        if hasattr(event, "content_block"):
-                            block = event.content_block
+                if event_type == "AssistantMessage":
+                    # Extract text content
+                    if hasattr(event, "content"):
+                        for block in event.content:
+                            if hasattr(block, "text"):
+                                delta = block.text[len(current_text):]
+                                if delta:
+                                    current_text = block.text
+                                    yield f"data: {json.dumps({'type': 'text_delta', 'text': delta})}\n\n"
+                            # Check for tool use blocks
                             if hasattr(block, "type") and block.type == "tool_use":
                                 tool_name = getattr(block, "name", "unknown")
-                                yield f"data: {json.dumps({'type': 'tool_use', 'tool': tool_name, 'status': 'start'})}\n\n"
-                    elif event.type == "content_block_stop":
-                        yield f"data: {json.dumps({'type': 'tool_use', 'status': 'stop'})}\n\n"
+                                yield f"data: {json.dumps({'type': 'tool_use', 'tool': tool_name, 'status': 'running'})}\n\n"
 
-            elif event_type == "ResultMessage":
-                # Final result with session ID
-                if hasattr(event, "session_id"):
-                    session_id = event.session_id
-                    if not sent_session_start:
-                        yield f"data: {json.dumps({'type': 'session_start', 'session_id': session_id})}\n\n"
-                        sent_session_start = True
-                    # Register session with session_manager so it appears in list
-                    session_manager.create_session(workspace_path, session_id)
+                elif event_type == "StreamEvent":
+                    # Raw stream event
+                    if hasattr(event, "type"):
+                        if event.type == "content_block_delta":
+                            if hasattr(event, "delta") and hasattr(event.delta, "text"):
+                                yield f"data: {json.dumps({'type': 'text_delta', 'text': event.delta.text})}\n\n"
+                        elif event.type == "content_block_start":
+                            if hasattr(event, "content_block"):
+                                block = event.content_block
+                                if hasattr(block, "type") and block.type == "tool_use":
+                                    tool_name = getattr(block, "name", "unknown")
+                                    yield f"data: {json.dumps({'type': 'tool_use', 'tool': tool_name, 'status': 'start'})}\n\n"
+                        elif event.type == "content_block_stop":
+                            yield f"data: {json.dumps({'type': 'tool_use', 'status': 'stop'})}\n\n"
 
-        # Commit session to git (git as database - commit after every message)
-        git_commit(Path(workspace_path), f"Chat: {session_id}")
+                elif event_type == "ResultMessage":
+                    # Final result with session ID
+                    if hasattr(event, "session_id"):
+                        session_id = event.session_id
+                        if not sent_session_start:
+                            yield f"data: {json.dumps({'type': 'session_start', 'session_id': session_id})}\n\n"
+                            sent_session_start = True
+                        # Register session with session_manager so it appears in list
+                        session_manager.create_session(workspace_path, session_id)
+
+            # Commit session to git (git as database - commit after every message)
+            git_commit(Path(workspace_path), f"Chat: {session_id}")
+        except Exception as e:
+            logger.error(f"[chat] Error in generate: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
         # Send done event
         yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'usage': {'input_tokens': 0, 'output_tokens': 0}})}\n\n"
@@ -411,6 +451,7 @@ class SchemaEntityType(BaseModel):
 class SchemaResponse(BaseModel):
     """Workspace schema response."""
     entities: list[SchemaEntityType]
+    workflow: list[str] | None = None
 
 
 @app.get("/schema", response_model=SchemaResponse)
@@ -435,10 +476,106 @@ async def get_schema():
                 icon=config.get("icon"),
             ))
 
-        return SchemaResponse(entities=entities)
+        # Parse workflow (optional ordered list of entity type names)
+        workflow_data = data.get("workflow")
+        entity_names = set(entities_data.keys())
+        workflow = [w for w in workflow_data if w in entity_names] if isinstance(workflow_data, list) else None
+
+        return SchemaResponse(entities=entities, workflow=workflow)
     except (yaml.YAMLError, Exception) as e:
         # Return empty on parse error
         return SchemaResponse(entities=[])
+
+
+class UpdateWorkflowRequest(BaseModel):
+    """Request to update workflow order."""
+    workflow: list[str]
+
+
+class CreateEntityTypeRequest(BaseModel):
+    """Request to create a new entity type."""
+    name: str
+
+
+@app.post("/schema/entity-types", response_model=SchemaEntityType)
+async def create_entity_type(request: CreateEntityTypeRequest):
+    """Create a new entity type in the workspace schema."""
+    workspace = Path(os.environ.get("WORKSPACE_PATH", "/workspace"))
+    schema_path = workspace / ".claude" / "schema.yaml"
+
+    # Validate name: lowercase, underscores, no special chars
+    name = request.name.strip().lower().replace(" ", "_")
+    if not re.match(r'^[a-z][a-z0-9_]*$', name):
+        raise HTTPException(
+            status_code=400,
+            detail="Entity type name must start with a letter and contain only lowercase letters, numbers, and underscores",
+        )
+
+    # Load or create schema
+    if schema_path.exists():
+        try:
+            data = yaml.safe_load(schema_path.read_text()) or {}
+        except yaml.YAMLError:
+            raise HTTPException(status_code=500, detail="Failed to parse schema.yaml")
+    else:
+        schema_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+
+    entities = data.get("entities", {})
+
+    # Check if already exists
+    if name in entities:
+        raise HTTPException(status_code=409, detail=f"Entity type '{name}' already exists")
+
+    # Create the directory
+    type_dir = workspace / name
+    type_dir.mkdir(parents=True, exist_ok=True)
+
+    # Add to schema
+    entities[name] = {"directory": name}
+    data["entities"] = entities
+
+    schema_path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True))
+
+    # Commit to git
+    git_commit(workspace, f"Add entity type: {name}")
+
+    return SchemaEntityType(name=name, directory=name)
+
+
+@app.put("/schema/workflow")
+async def update_workflow(request: UpdateWorkflowRequest):
+    """Update the workflow order in schema.yaml."""
+    workspace = Path(os.environ.get("WORKSPACE_PATH", "/workspace"))
+    schema_path = workspace / ".claude" / "schema.yaml"
+
+    if not schema_path.exists():
+        raise HTTPException(status_code=404, detail="No schema.yaml found")
+
+    try:
+        data = yaml.safe_load(schema_path.read_text()) or {}
+    except yaml.YAMLError:
+        raise HTTPException(status_code=500, detail="Failed to parse schema.yaml")
+
+    # Validate all workflow entries are valid entity types
+    entity_names = set(data.get("entities", {}).keys())
+    invalid = [w for w in request.workflow if w not in entity_names]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid entity types in workflow: {invalid}. Valid types: {sorted(entity_names)}",
+        )
+
+    # Update workflow in data
+    data["workflow"] = request.workflow
+
+    # Write back preserving structure
+    schema_path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True))
+
+    # Commit to git
+    git_commit(workspace, "Update workflow order")
+
+    return {"workflow": request.workflow}
 
 
 # ============== Entity Endpoints ==============
@@ -726,6 +863,7 @@ class SessionInfo(BaseModel):
     archived: bool
     created_at: str
     updated_at: str
+    source_ids: list[str] | None = None
 
 
 class SessionMessageResponse(BaseModel):
@@ -754,6 +892,7 @@ async def list_sessions(include_archived: bool = False) -> list[SessionInfo]:
             archived=s.archived,
             created_at=s.created_at,
             updated_at=s.updated_at,
+            source_ids=s.source_ids,
         )
         for s in sessions
     ]
@@ -790,6 +929,7 @@ async def create_session(request: CreateSessionRequest = None):
         archived=session.archived,
         created_at=session.created_at,
         updated_at=session.updated_at,
+        source_ids=session.source_ids,
     )
 
 
@@ -808,6 +948,7 @@ async def get_session(session_id: str) -> SessionInfo:
         archived=session.archived,
         created_at=session.created_at,
         updated_at=session.updated_at,
+        source_ids=session.source_ids,
     )
 
 
@@ -854,6 +995,7 @@ async def update_session(session_id: str, request: UpdateSessionRequest) -> Sess
         archived=session.archived,
         created_at=session.created_at,
         updated_at=session.updated_at,
+        source_ids=session.source_ids,
     )
 
 
@@ -873,6 +1015,7 @@ class MessageContext(BaseModel):
     """Page context sent with a message."""
     currentView: str | None = None
     currentEntity: dict | None = None  # {type, id, title}
+    sourceIds: list[str] | None = None  # For source-grounded chat
 
 class SendMessageRequest(BaseModel):
     """Request to send a message (fire-and-forget)."""
@@ -952,6 +1095,41 @@ async def _process_session_messages(session_id: str, workspace_path: str):
 
             message, context = result
 
+            # Build source constraint for source-grounded chat
+            source_constraint = None
+            if context and context.get("sourceIds"):
+                from .librarian import LibraryIndex
+                lib_index = LibraryIndex(workspace_path)
+                source_constraint = []
+                total_chars = 0
+                max_budget = 60000
+                for sid in context["sourceIds"]:
+                    if sid == "*":
+                        docs = lib_index.list_documents()
+                    elif lib_index.get_topic(sid):
+                        docs = lib_index.list_documents(topic_filter=[sid])
+                    else:
+                        doc = lib_index.get_document(sid)
+                        docs = [doc] if doc else []
+
+                    for doc in docs:
+                        if total_chars >= max_budget:
+                            break
+                        content = lib_index.get_document_content(doc.id)
+                        if content:
+                            truncated = content[:min(15000, max_budget - total_chars)]
+                            source_constraint.append({
+                                "title": doc.title,
+                                "content": truncated,
+                            })
+                            total_chars += len(truncated)
+                    if total_chars >= max_budget:
+                        break
+                # Store source_ids in session metadata for persistence
+                session_manager.update_session(
+                    workspace_path, session_id, source_ids=context["sourceIds"]
+                )
+
             # Build attached_entities from page context
             attached_entities = None
             if context and context.get("currentEntity"):
@@ -996,6 +1174,7 @@ async def _process_session_messages(session_id: str, workspace_path: str):
                     workspace_path=workspace_path,
                     session_id=sdk_session_id,  # None for new sessions, SDK creates its own ID
                     attached_entities=attached_entities,
+                    source_constraint=source_constraint,
                 ):
                     event_type = type(event).__name__
 
@@ -1126,8 +1305,9 @@ async def session_events(session_id: str):
             # Stream events
             while True:
                 try:
-                    # Wait for event with timeout to allow checking connection
-                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    # Wait for event with timeout to send keepalive.
+                    # 15s keeps Vercel proxy alive (its idle timeout is ~30s).
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
                     yield f"data: {json.dumps({'type': event.type, **event.data, 'timestamp': event.timestamp})}\n\n"
                 except asyncio.TimeoutError:
                     # Send keepalive
@@ -1373,6 +1553,8 @@ class TopicResponse(BaseModel):
     name: str
     description: str
     document_count: int
+    file_count: int = 0
+    entity_count: int = 0
 
 
 class TopicDocumentResponse(BaseModel):
@@ -1381,6 +1563,7 @@ class TopicDocumentResponse(BaseModel):
     title: str
     doc_type: str
     summary: str
+    source: str = "file"  # "file" or "entity"
 
 
 class TopicDetailResponse(BaseModel):
@@ -1389,6 +1572,8 @@ class TopicDetailResponse(BaseModel):
     name: str
     description: str
     document_count: int
+    file_count: int = 0
+    entity_count: int = 0
     documents: list[TopicDocumentResponse]
 
 
@@ -1400,15 +1585,20 @@ async def list_topics() -> list[TopicResponse]:
     index = LibraryIndex(workspace)
     topics = index.list_topics()
 
-    return [
-        TopicResponse(
+    result = []
+    for t in topics:
+        docs = index.list_documents(topic_filter=[t.id])
+        entity_count = sum(1 for d in docs if d.id.startswith("entity:"))
+        file_count = len(docs) - entity_count
+        result.append(TopicResponse(
             id=t.id,
             name=t.name,
             description=t.description,
             document_count=t.document_count,
-        )
-        for t in topics
-    ]
+            file_count=file_count,
+            entity_count=entity_count,
+        ))
+    return result
 
 
 @app.get("/library/topics/{topic_id}")
@@ -1425,17 +1615,23 @@ async def get_topic(topic_id: str) -> TopicDetailResponse:
     # Get documents for this topic
     docs = index.list_documents(topic_filter=[topic_id])
 
+    entity_count = sum(1 for d in docs if d.id.startswith("entity:"))
+    file_count = len(docs) - entity_count
+
     return TopicDetailResponse(
         id=topic.id,
         name=topic.name,
         description=topic.description,
         document_count=topic.document_count,
+        file_count=file_count,
+        entity_count=entity_count,
         documents=[
             TopicDocumentResponse(
                 id=d.id,
                 title=d.title,
                 doc_type=d.doc_type,
                 summary=d.summaries.brief,
+                source="entity" if d.id.startswith("entity:") else "file",
             )
             for d in docs
         ],
@@ -1457,7 +1653,15 @@ async def reindex_library():
     analyzer = DocumentAnalyzer()
 
     files = manager.list_files()
-    results = {"indexed": 0, "skipped": 0, "failed": 0, "errors": []}
+    results = {"indexed": 0, "skipped": 0, "failed": 0, "errors": [], "pruned": 0}
+
+    # Prune stale library file entries from the index
+    active_file_ids = {f.id for f in files}
+    all_indexed = index.list_documents()
+    for doc in all_indexed:
+        if not doc.id.startswith("entity:") and doc.id not in active_file_ids:
+            index.remove_document(doc.id)
+            results["pruned"] += 1
 
     for lib_file in files:
         if lib_file.status != "complete":
@@ -1502,11 +1706,82 @@ async def reindex_library():
             results["failed"] += 1
             results["errors"].append({"file_id": lib_file.id, "filename": lib_file.filename, "error": str(e)})
 
-    # Commit to git
+    # Index workspace entities through the same pipeline
+    entity_results = index.index_entities(analyzer)
+    results["indexed"] += entity_results["indexed"]
+    results["skipped"] += entity_results["skipped"]
+    results["failed"] += entity_results["failed"]
+    results["errors"].extend(entity_results["errors"])
+
+    # Generate insights if documents were indexed
     if results["indexed"] > 0:
+        try:
+            all_docs = index.list_documents()
+            if len(all_docs) >= 2:
+                doc_briefs = [
+                    {"id": d.id, "title": d.title, "brief": d.summaries.brief}
+                    for d in all_docs if d.summaries.brief
+                ]
+                if len(doc_briefs) >= 2:
+                    raw_insights = analyzer.generate_insights(doc_briefs)
+                    insight_items = []
+                    for raw in raw_insights:
+                        from .librarian import InsightItem
+                        import uuid as _uuid
+                        insight_items.append(InsightItem(
+                            id=_uuid.uuid4().hex,
+                            type=raw.get("type", "connection"),
+                            title=raw.get("title", ""),
+                            description=raw.get("description", ""),
+                            source_ids=raw.get("source_ids", []),
+                            source_titles=raw.get("source_titles", []),
+                            status="new",
+                            created_at=datetime.utcnow().isoformat(),
+                        ))
+                    if insight_items:
+                        index.add_insights(insight_items)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Insight generation failed: {e}")
+
         git_commit(Path(workspace), f"Library: reindex {results['indexed']} files")
 
     return results
+
+
+@app.get("/library/entity-content/{entity_path:path}")
+async def get_entity_content(entity_path: str) -> LibraryFileContentResponse:
+    """Get the content of an entity-sourced indexed document."""
+    workspace = Path(get_workspace_path())
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+
+    doc_id = f"entity:{entity_path}"
+    doc = index.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Entity not found in index")
+
+    content = index.get_document_content(doc_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail="Entity file not found")
+
+    summaries = None
+    topics = None
+    if doc:
+        summaries = {
+            "brief": doc.summaries.brief,
+            "standard": doc.summaries.standard,
+            "detailed": doc.summaries.detailed,
+        }
+        topics = doc.topics
+
+    return LibraryFileContentResponse(
+        id=doc_id,
+        filename=doc.metadata.source_filename,
+        content=content,
+        summaries=summaries,
+        topics=topics,
+    )
 
 
 @app.post("/library/infer-schema")
@@ -1549,6 +1824,329 @@ async def organize_workspace(request: OrganizeRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )
+
+
+# ============== Podcast Audio Endpoints ==============
+
+class AudioGenerateRequest(BaseModel):
+    """Request to generate podcast audio."""
+    source_ids: list[str]
+    title: str | None = None
+
+
+class AudioGenerationResponse(BaseModel):
+    """Audio generation metadata."""
+    id: str
+    title: str
+    status: str
+    source_ids: list[str]
+    duration: float | None
+    error: str | None
+    created_at: str
+    segment_count: int
+
+
+@app.post("/library/audio/generate")
+async def generate_audio(request: AudioGenerateRequest):
+    """Generate podcast audio from sources (SSE stream)."""
+    workspace = get_workspace_path()
+    from .podcast import PodcastManager
+    manager = PodcastManager(workspace)
+
+    async def generate():
+        async for event in manager.generate(request.source_ids, request.title):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
+@app.get("/library/audio")
+async def list_audio_generations() -> list[AudioGenerationResponse]:
+    """List all audio generations."""
+    workspace = get_workspace_path()
+    from .podcast import PodcastManager
+    manager = PodcastManager(workspace)
+    generations = manager.list_generations()
+
+    return [
+        AudioGenerationResponse(
+            id=g.id,
+            title=g.title,
+            status=g.status,
+            source_ids=g.source_ids,
+            duration=g.duration,
+            error=g.error,
+            created_at=g.created_at,
+            segment_count=g.segment_count,
+        )
+        for g in generations
+    ]
+
+
+@app.get("/library/audio/{gen_id}")
+async def get_audio_generation(gen_id: str) -> AudioGenerationResponse:
+    """Get audio generation metadata."""
+    workspace = get_workspace_path()
+    from .podcast import PodcastManager
+    manager = PodcastManager(workspace)
+    gen = manager.get_generation(gen_id)
+
+    if not gen:
+        raise HTTPException(status_code=404, detail="Generation not found")
+
+    return AudioGenerationResponse(
+        id=gen.id,
+        title=gen.title,
+        status=gen.status,
+        source_ids=gen.source_ids,
+        duration=gen.duration,
+        error=gen.error,
+        created_at=gen.created_at,
+        segment_count=gen.segment_count,
+    )
+
+
+@app.get("/library/audio/{gen_id}/stream")
+async def stream_audio(gen_id: str):
+    """Stream the podcast MP3 file."""
+    workspace = get_workspace_path()
+    from .podcast import PodcastManager
+    manager = PodcastManager(workspace)
+    audio_path = manager.get_audio_path(gen_id)
+
+    if not audio_path:
+        raise HTTPException(status_code=404, detail="Audio not found or not ready")
+
+    return FileResponse(
+        audio_path,
+        media_type="audio/mpeg",
+        filename=f"podcast-{gen_id}.mp3",
+    )
+
+
+@app.delete("/library/audio/{gen_id}")
+async def delete_audio_generation(gen_id: str):
+    """Delete an audio generation."""
+    workspace = get_workspace_path()
+    from .podcast import PodcastManager
+    manager = PodcastManager(workspace)
+
+    if not manager.delete_generation(gen_id):
+        raise HTTPException(status_code=404, detail="Generation not found")
+
+    git_commit(Path(workspace), f"Library: delete podcast {gen_id}")
+    return {"status": "deleted", "id": gen_id}
+
+
+# ============== Topic Summary Endpoints ==============
+
+class CollectionSummaryResponse(BaseModel):
+    """Collection summary for a topic."""
+    overview: str
+    themes: list[str]
+    key_findings: list[str]
+    connections: str
+
+
+@app.get("/library/topics/{topic_id}/summary")
+async def get_topic_summary(topic_id: str) -> CollectionSummaryResponse:
+    """Get or generate a topic summary."""
+    workspace = get_workspace_path()
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    summary = index.get_topic_summary(topic_id)
+
+    if not summary:
+        raise HTTPException(status_code=404, detail="Topic not found or no documents")
+
+    return CollectionSummaryResponse(**summary)
+
+
+@app.post("/library/topics/{topic_id}/summary")
+async def regenerate_topic_summary(topic_id: str) -> CollectionSummaryResponse:
+    """Force regenerate a topic summary."""
+    workspace = get_workspace_path()
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    summary = index.regenerate_topic_summary(topic_id)
+
+    if not summary:
+        raise HTTPException(status_code=404, detail="Topic not found or no documents")
+
+    git_commit(Path(workspace), f"Library: regenerate topic summary {topic_id}")
+    return CollectionSummaryResponse(**summary)
+
+
+# ============== Insight Endpoints ==============
+
+class InsightResponse(BaseModel):
+    """Insight item for API."""
+    id: str
+    type: str
+    title: str
+    description: str
+    source_ids: list[str]
+    source_titles: list[str]
+    status: str
+    created_at: str
+
+
+class InsightCountResponse(BaseModel):
+    """Insight count response."""
+    count: int
+
+
+class UpdateInsightRequest(BaseModel):
+    """Request to update insight status."""
+    status: str
+
+
+@app.get("/library/insights")
+async def list_insights(status: str | None = None) -> list[InsightResponse]:
+    """List insights with optional status filter."""
+    workspace = get_workspace_path()
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    items = index.list_insights(status_filter=status)
+
+    return [
+        InsightResponse(
+            id=i.id,
+            type=i.type,
+            title=i.title,
+            description=i.description,
+            source_ids=i.source_ids,
+            source_titles=i.source_titles,
+            status=i.status,
+            created_at=i.created_at,
+        )
+        for i in items
+    ]
+
+
+@app.get("/library/insights/count")
+async def get_insight_count() -> InsightCountResponse:
+    """Get count of new insights."""
+    workspace = get_workspace_path()
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    return InsightCountResponse(count=index.get_insight_count())
+
+
+@app.patch("/library/insights/{insight_id}")
+async def update_insight(insight_id: str, request: UpdateInsightRequest) -> InsightResponse:
+    """Update an insight's status."""
+    workspace = get_workspace_path()
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    item = index.update_insight(insight_id, request.status)
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Insight not found")
+
+    git_commit(Path(workspace), f"Library: update insight {insight_id}")
+
+    return InsightResponse(
+        id=item.id,
+        type=item.type,
+        title=item.title,
+        description=item.description,
+        source_ids=item.source_ids,
+        source_titles=item.source_titles,
+        status=item.status,
+        created_at=item.created_at,
+    )
+
+
+# ============== Notebook endpoints ==============
+
+
+class NotebookResponse(BaseModel):
+    id: str
+    title: str
+    source_ids: list[str]
+    source_labels: list[str]
+    chat_session_id: str | None = None
+    audio_generation_ids: list[str] = []
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class CreateNotebookRequest(BaseModel):
+    title: str
+    source_ids: list[str] = []
+    source_labels: list[str] = []
+
+
+class UpdateNotebookRequest(BaseModel):
+    title: str | None = None
+    source_ids: list[str] | None = None
+    source_labels: list[str] | None = None
+    chat_session_id: str | None = None
+    audio_generation_ids: list[str] | None = None
+
+
+@app.get("/library/notebooks")
+async def list_notebooks() -> list[NotebookResponse]:
+    """List all notebooks."""
+    workspace = get_workspace_path()
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    notebooks = index.list_notebooks()
+    return [NotebookResponse(**n.to_dict()) for n in notebooks]
+
+
+@app.post("/library/notebooks")
+async def create_notebook(request: CreateNotebookRequest) -> NotebookResponse:
+    """Create a new notebook."""
+    workspace = get_workspace_path()
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    notebook = index.create_notebook(request.title, request.source_ids, request.source_labels)
+    git_commit(Path(workspace), f"Library: create notebook '{request.title}'")
+    return NotebookResponse(**notebook.to_dict())
+
+
+@app.get("/library/notebooks/{notebook_id}")
+async def get_notebook(notebook_id: str) -> NotebookResponse:
+    """Get a notebook by ID."""
+    workspace = get_workspace_path()
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    notebook = index.get_notebook(notebook_id)
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    return NotebookResponse(**notebook.to_dict())
+
+
+@app.patch("/library/notebooks/{notebook_id}")
+async def update_notebook(notebook_id: str, request: UpdateNotebookRequest) -> NotebookResponse:
+    """Update a notebook."""
+    workspace = get_workspace_path()
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    updates = {k: v for k, v in request.model_dump().items() if v is not None}
+    notebook = index.update_notebook(notebook_id, **updates)
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    git_commit(Path(workspace), f"Library: update notebook '{notebook.title}'")
+    return NotebookResponse(**notebook.to_dict())
+
+
+@app.delete("/library/notebooks/{notebook_id}")
+async def delete_notebook(notebook_id: str):
+    """Delete a notebook."""
+    workspace = get_workspace_path()
+    from .librarian import LibraryIndex
+    index = LibraryIndex(workspace)
+    if not index.delete_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    git_commit(Path(workspace), f"Library: delete notebook {notebook_id}")
+    return {"ok": True}
 
 
 def main():
