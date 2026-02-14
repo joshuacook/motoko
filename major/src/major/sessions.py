@@ -33,6 +33,8 @@ class SessionMetadata:
     entity_type: str | None = None  # For sessions linked to entities (e.g., "handoffs")
     entity_id: str | None = None    # For sessions linked to entities (e.g., "handoff-foo")
     source_ids: list[str] | None = None  # For source-grounded chat sessions
+    user_id: str | None = None   # Clerk user ID (from X-User-Id header)
+    org_id: str | None = None    # Clerk org ID (from X-Org-Id header)
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
@@ -163,6 +165,8 @@ class SessionManager:
                 entity_type=session_entity_type,
                 entity_id=meta.get('entity_id'),
                 source_ids=meta.get('source_ids'),
+                user_id=meta.get('user_id'),
+                org_id=meta.get('org_id'),
                 created_at=meta.get('created_at', datetime.utcnow().isoformat()),
                 updated_at=meta.get('updated_at', datetime.utcnow().isoformat()),
             )
@@ -193,6 +197,8 @@ class SessionManager:
             entity_type=meta.get('entity_type') if meta else None,
             entity_id=meta.get('entity_id') if meta else None,
             source_ids=meta.get('source_ids') if meta else None,
+            user_id=meta.get('user_id') if meta else None,
+            org_id=meta.get('org_id') if meta else None,
             created_at=meta.get('created_at', datetime.utcnow().isoformat()) if meta else datetime.utcnow().isoformat(),
             updated_at=meta.get('updated_at', datetime.utcnow().isoformat()) if meta else datetime.utcnow().isoformat(),
         )
@@ -207,6 +213,8 @@ class SessionManager:
         entity_type: str | None = None,
         entity_id: str | None = None,
         source_ids: list[str] | None = None,
+        user_id: str | None = None,
+        org_id: str | None = None,
     ) -> SessionMetadata:
         """Update session metadata."""
         metadata = self._load_metadata(workspace_path)
@@ -228,6 +236,10 @@ class SessionManager:
             metadata[session_id]['entity_id'] = entity_id
         if source_ids is not None:
             metadata[session_id]['source_ids'] = source_ids
+        if user_id is not None:
+            metadata[session_id]['user_id'] = user_id
+        if org_id is not None:
+            metadata[session_id]['org_id'] = org_id
 
         metadata[session_id]['updated_at'] = datetime.utcnow().isoformat()
         metadata[session_id]['workspace_path'] = workspace_path
@@ -236,9 +248,12 @@ class SessionManager:
 
         return self.get_session(workspace_path, session_id)
 
-    def create_session(self, workspace_path: str, session_id: str) -> SessionMetadata:
+    def create_session(
+        self, workspace_path: str, session_id: str,
+        user_id: str | None = None, org_id: str | None = None,
+    ) -> SessionMetadata:
         """Create metadata entry for a new session."""
-        return self.update_session(workspace_path, session_id)
+        return self.update_session(workspace_path, session_id, user_id=user_id, org_id=org_id)
 
     def delete_session(self, workspace_path: str, session_id: str) -> bool:
         """Delete session metadata and optionally the JSONL file."""

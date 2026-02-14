@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
@@ -126,6 +126,21 @@ app.add_middleware(
 )
 
 
+@dataclass
+class AuthContext:
+    """Auth context extracted from request headers."""
+    user_id: str | None = None
+    org_id: str | None = None
+
+
+def get_auth_context(request: Request) -> AuthContext:
+    """FastAPI dependency: extract auth headers set by the BFF proxy."""
+    return AuthContext(
+        user_id=request.headers.get("x-user-id"),
+        org_id=request.headers.get("x-org-id"),
+    )
+
+
 def git_commit(workspace: Path, message: str) -> bool:
     """Commit changes to git repository.
 
@@ -210,7 +225,7 @@ async def health():
 
 
 @app.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, auth: AuthContext = Depends(get_auth_context)):
     """Send a chat message and get streaming response."""
     workspace_path = os.environ.get("WORKSPACE_PATH", "/workspace")
 
@@ -303,7 +318,7 @@ async def chat(request: ChatRequest):
                             yield f"data: {json.dumps({'type': 'session_start', 'session_id': session_id})}\n\n"
                             sent_session_start = True
                         # Register session with session_manager so it appears in list
-                        session_manager.create_session(workspace_path, session_id)
+                        session_manager.create_session(workspace_path, session_id, user_id=auth.user_id, org_id=auth.org_id)
 
             # Commit session to git (git as database - commit after every message)
             git_commit(Path(workspace_path), f"Chat: {session_id}")
@@ -325,7 +340,7 @@ async def chat(request: ChatRequest):
 
 
 @app.post("/chat/sync", response_model=ChatResponse)
-async def chat_sync(request: ChatRequest):
+async def chat_sync(request: ChatRequest, auth: AuthContext = Depends(get_auth_context)):
     """Send a chat message and get full response (non-streaming)."""
     workspace_path = os.environ.get("WORKSPACE_PATH", "/workspace")
 
@@ -351,7 +366,7 @@ async def chat_sync(request: ChatRequest):
             if hasattr(event, "session_id"):
                 session_id = event.session_id
                 # Register session with session_manager so it appears in list
-                session_manager.create_session(workspace_path, session_id)
+                session_manager.create_session(workspace_path, session_id, user_id=auth.user_id, org_id=auth.org_id)
 
     # Commit session to git (git as database - commit after every message)
     git_commit(Path(workspace_path), f"Chat: {session_id}")
@@ -373,7 +388,7 @@ class ChatSendResponse(BaseModel):
 
 
 @app.post("/chat/send", response_model=ChatSendResponse)
-async def chat_send(request: ChatRequest):
+async def chat_send(request: ChatRequest, auth: AuthContext = Depends(get_auth_context)):
     """Send a chat message (fire-and-forget).
 
     Starts Claude in background and returns immediately.
@@ -409,7 +424,7 @@ async def chat_send(request: ChatRequest):
                     if hasattr(event, "session_id") and event.session_id:
                         # Update with real session ID from SDK
                         real_session_id = event.session_id
-                        session_manager.create_session(workspace_path, real_session_id)
+                        session_manager.create_session(workspace_path, real_session_id, user_id=auth.user_id, org_id=auth.org_id)
                         # Update tracking
                         if session_id in _running_sessions:
                             _running_sessions[real_session_id] = _running_sessions.pop(session_id)
@@ -904,7 +919,7 @@ class CreateSessionRequest(BaseModel):
 
 
 @app.post("/sessions", response_model=SessionInfo)
-async def create_session(request: CreateSessionRequest = None):
+async def create_session(request: CreateSessionRequest = None, auth: AuthContext = Depends(get_auth_context)):
     """Create a new chat session.
 
     Returns the session info with generated ID. Use this ID to:
@@ -915,7 +930,7 @@ async def create_session(request: CreateSessionRequest = None):
     session_id = str(uuid.uuid4())
 
     # Create session
-    session_manager.create_session(workspace, session_id)
+    session_manager.create_session(workspace, session_id, user_id=auth.user_id, org_id=auth.org_id)
 
     # Update title if provided
     if request and request.title:
@@ -1030,7 +1045,7 @@ class SendMessageResponse(BaseModel):
 
 
 @app.post("/sessions/{session_id}/messages", response_model=SendMessageResponse)
-async def send_message(session_id: str, request: SendMessageRequest):
+async def send_message(session_id: str, request: SendMessageRequest, auth: AuthContext = Depends(get_auth_context)):
     """Send a message to a session (fire-and-forget).
 
     The message is queued and the agent will process it asynchronously.
@@ -1042,7 +1057,7 @@ async def send_message(session_id: str, request: SendMessageRequest):
     session = session_manager.get_session(workspace_path, session_id)
     if not session:
         # Create the session
-        session_manager.create_session(workspace_path, session_id)
+        session_manager.create_session(workspace_path, session_id, user_id=auth.user_id, org_id=auth.org_id)
 
     # Generate message ID
     message_id = f"msg-{uuid.uuid4().hex[:12]}"
@@ -1059,12 +1074,12 @@ async def send_message(session_id: str, request: SendMessageRequest):
 
     # Start processing if not already running
     if not event_bus.is_processing(session_id):
-        asyncio.create_task(_process_session_messages(session_id, workspace_path))
+        asyncio.create_task(_process_session_messages(session_id, workspace_path, auth))
 
     return SendMessageResponse(status="queued", message_id=message_id)
 
 
-async def _process_session_messages(session_id: str, workspace_path: str):
+async def _process_session_messages(session_id: str, workspace_path: str, auth: AuthContext | None = None):
     """Process queued messages for a session.
 
     Runs in background, picks up messages from queue, sends to agent,
@@ -1228,7 +1243,11 @@ async def _process_session_messages(session_id: str, workspace_path: str):
                         # Final result - capture SDK's session ID
                         if hasattr(event, "session_id") and event.session_id:
                             actual_sdk_id = event.session_id
-                            session_manager.create_session(workspace_path, actual_sdk_id)
+                            session_manager.create_session(
+                                workspace_path, actual_sdk_id,
+                                user_id=auth.user_id if auth else None,
+                                org_id=auth.org_id if auth else None,
+                            )
 
                             # If SDK created a new session with different ID, symlink to our session_id
                             if actual_sdk_id != session_id:
