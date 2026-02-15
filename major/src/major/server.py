@@ -114,7 +114,8 @@ class SessionEventBus:
 event_bus = SessionEventBus()
 
 
-app = FastAPI(title="Major Chat Agent", version="0.1.0")
+product_name = os.environ.get("PRODUCT_NAME", "major")
+app = FastAPI(title=f"{product_name.title()} Agent", version="0.1.0")
 
 # CORS for local development
 app.add_middleware(
