@@ -19,7 +19,6 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
 from .library import LibraryManager, LibraryFile as LibraryFileModel, get_content_type, is_supported_file
-from .organize import WorkspaceOrganizer
 
 from .agent import MajorAgent
 from .config import MajorConfig
@@ -1804,48 +1803,6 @@ async def get_entity_content(entity_path: str) -> LibraryFileContentResponse:
     )
 
 
-@app.post("/library/infer-schema")
-async def infer_schema():
-    """Analyze library files and propose a workspace schema."""
-    workspace = get_workspace_path()
-    manager = LibraryManager(workspace)
-    organizer = WorkspaceOrganizer(Path(workspace))
-
-    try:
-        proposal = organizer.infer_schema(manager)
-        return proposal
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-class OrganizeRequest(BaseModel):
-    """Request body for workspace organization."""
-    workspace_schema: dict
-    file_assignments: list[dict]
-
-
-@app.post("/library/organize")
-async def organize_workspace(request: OrganizeRequest):
-    """Apply schema and create structured entities (SSE stream)."""
-    workspace = get_workspace_path()
-    manager = LibraryManager(workspace)
-    organizer = WorkspaceOrganizer(Path(workspace))
-
-    async def generate():
-        async for event in organizer.organize(
-            request.workspace_schema,
-            request.file_assignments,
-            manager,
-        ):
-            yield f"data: {json.dumps(event)}\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
-    )
-
-
 # ============== Podcast Audio Endpoints ==============
 
 class AudioGenerateRequest(BaseModel):
@@ -2167,6 +2124,89 @@ async def delete_notebook(notebook_id: str):
         raise HTTPException(status_code=404, detail="Notebook not found")
     git_commit(Path(workspace), f"Library: delete notebook {notebook_id}")
     return {"ok": True}
+
+
+# ============== TTS Endpoint ==============
+
+class TTSRequest(BaseModel):
+    """Text-to-speech request."""
+    text: str
+    voice: str = "en-US-Chirp3-HD-Gacrux"
+    rate: float = 1.0
+
+
+# Lazy-loaded TTS client
+_tts_client = None
+
+
+def _get_tts_client():
+    """Get or create the TTS client."""
+    global _tts_client
+    if _tts_client is None:
+        from google.cloud import texttospeech
+        _tts_client = texttospeech.TextToSpeechClient()
+    return _tts_client
+
+
+@app.post("/tts")
+async def text_to_speech(request: TTSRequest):
+    """Synthesize speech from text using Google Cloud TTS."""
+    from google.cloud import texttospeech
+    from fastapi.responses import Response
+
+    client = _get_tts_client()
+
+    synthesis_input = texttospeech.SynthesisInput(text=request.text)
+    voice = texttospeech.VoiceSelectionParams(
+        language_code="en-US",
+        name=request.voice,
+    )
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.MP3,
+    )
+
+    response = client.synthesize_speech(
+        input=synthesis_input,
+        voice=voice,
+        audio_config=audio_config,
+    )
+
+    return Response(content=response.audio_content, media_type="audio/mpeg")
+
+
+# ============== Summarize Endpoint ==============
+
+class SummarizeRequest(BaseModel):
+    """Summarize request."""
+    text: str
+    max_words: int = 10
+
+
+@app.post("/summarize")
+async def summarize_text(request: SummarizeRequest):
+    """Generate a short summary of text using Claude Haiku."""
+    import anthropic
+
+    if len(request.text) < 20:
+        return {"summary": request.text}
+
+    try:
+        client = anthropic.Anthropic()
+        message = client.messages.create(
+            model="claude-3-5-haiku-latest",
+            max_tokens=50,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"Summarize this in exactly {request.max_words} words or fewer. Return ONLY the summary, no preamble:\n\n{request.text[:2000]}"
+                }
+            ]
+        )
+        summary = message.content[0].text.strip()
+        return {"summary": summary}
+    except Exception:
+        words = request.text.split()[:request.max_words]
+        return {"summary": " ".join(words) + ("..." if len(request.text.split()) > request.max_words else "")}
 
 
 def main():
