@@ -1243,14 +1243,19 @@ async def _process_session_messages(session_id: str, workspace_path: str, auth: 
                         # Final result - capture SDK's session ID
                         if hasattr(event, "session_id") and event.session_id:
                             actual_sdk_id = event.session_id
-                            session_manager.create_session(
-                                workspace_path, actual_sdk_id,
-                                user_id=auth.user_id if auth else None,
-                                org_id=auth.org_id if auth else None,
-                            )
 
-                            # If SDK created a new session with different ID, symlink to our session_id
-                            if actual_sdk_id != session_id:
+                            # If SDK used the same ID, update its metadata
+                            if actual_sdk_id == session_id:
+                                session_manager.create_session(
+                                    workspace_path, actual_sdk_id,
+                                    user_id=auth.user_id if auth else None,
+                                    org_id=auth.org_id if auth else None,
+                                )
+                            else:
+                                # SDK created a new session with different ID.
+                                # Don't register SDK ID as a separate session — it would
+                                # cause duplicates in the session list. Instead, symlink our
+                                # frontend session ID to the SDK's JSONL file.
                                 sdk_file = sessions_dir / f"{actual_sdk_id}.jsonl"
                                 our_file = sessions_dir / f"{session_id}.jsonl"
                                 if sdk_file.exists() and not our_file.exists():

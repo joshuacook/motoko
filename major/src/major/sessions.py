@@ -113,6 +113,7 @@ class SessionManager:
 
         # Find all SDK session files
         session_ids = set()
+        symlink_targets = set()  # SDK session IDs that are aliased by a frontend session
         if sdk_dir.exists():
             for jsonl_file in sdk_dir.glob("*.jsonl"):
                 # Skip agent sidechain sessions (agent-*)
@@ -130,11 +131,20 @@ class SessionManager:
                         pass
                     continue
                 session_ids.add(jsonl_file.stem)
+                # Track symlink targets so we can filter out internal SDK sessions
+                if jsonl_file.is_symlink():
+                    try:
+                        symlink_targets.add(jsonl_file.resolve().stem)
+                    except Exception:
+                        pass
+
+        # Remove internal SDK sessions that are already represented by a frontend symlink
+        session_ids -= symlink_targets
 
         # Also include any sessions in metadata (in case JSONL was deleted)
-        # But filter out agent- prefixed ones
+        # But filter out agent- prefixed ones and symlink targets
         for sid in metadata.keys():
-            if not sid.startswith('agent-'):
+            if not sid.startswith('agent-') and sid not in symlink_targets:
                 session_ids.add(sid)
 
         for session_id in session_ids:
