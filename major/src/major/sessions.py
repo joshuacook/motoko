@@ -16,6 +16,7 @@ Storage structure:
 import json
 import os
 import re
+import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
@@ -426,6 +427,78 @@ class SessionManager:
             if msg.role == 'assistant':
                 return msg.content
         return None
+
+
+    # ==================== Pending Message Queue ====================
+
+    def _get_pending_dir(self, workspace_path: str) -> Path:
+        """Get path to pending messages directory."""
+        return Path(workspace_path) / ".chelle" / "pending"
+
+    def queue_pending_message(
+        self,
+        workspace_path: str,
+        session_id: str,
+        message: str,
+        context: dict | None = None,
+        user_id: str | None = None,
+        org_id: str | None = None,
+    ) -> str:
+        """Write a pending message to disk for the worker to process.
+
+        Returns:
+            message_id
+        """
+        pending_dir = self._get_pending_dir(workspace_path)
+        pending_dir.mkdir(parents=True, exist_ok=True)
+
+        msg_id = f"msg-{uuid.uuid4().hex[:12]}"
+        timestamp = datetime.utcnow().isoformat()
+
+        pending = {
+            "id": msg_id,
+            "session_id": session_id,
+            "message": message,
+            "context": context,
+            "user_id": user_id,
+            "org_id": org_id,
+            "timestamp": timestamp,
+        }
+
+        # Filename sorts by time naturally
+        safe_ts = timestamp.replace(":", "-")
+        filename = f"{safe_ts}_{session_id}_{msg_id}.json"
+        (pending_dir / filename).write_text(json.dumps(pending))
+
+        return msg_id
+
+    def get_next_pending(self, workspace_path: str) -> dict | None:
+        """Get the oldest pending message, or None.
+
+        Returns dict with all fields plus '_filename' for removal.
+        """
+        pending_dir = self._get_pending_dir(workspace_path)
+        if not pending_dir.exists():
+            return None
+
+        files = sorted(pending_dir.glob("*.json"))
+        if not files:
+            return None
+
+        try:
+            with open(files[0]) as f:
+                data = json.load(f)
+            data["_filename"] = files[0].name
+            return data
+        except Exception:
+            # Corrupted file — remove it
+            files[0].unlink(missing_ok=True)
+            return None
+
+    def remove_pending(self, workspace_path: str, filename: str) -> None:
+        """Remove a processed pending message file."""
+        path = self._get_pending_dir(workspace_path) / filename
+        path.unlink(missing_ok=True)
 
 
 # Global instance

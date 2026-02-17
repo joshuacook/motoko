@@ -1,14 +1,12 @@
 """HTTP server for Major chat agent."""
 
-import asyncio
 import os
 import json
 import re
 import subprocess
 import uuid
 import yaml
-from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncGenerator
 from datetime import datetime
@@ -25,92 +23,6 @@ from .config import MajorConfig
 from .sessions import session_manager, SessionMetadata
 
 
-# ============== Event Bus for Slack-like async messaging ==============
-
-@dataclass
-class SessionEvent:
-    """Event that can be sent to clients."""
-    type: str  # history, user_message, text_delta, tool_use, assistant_message, done, error
-    data: dict = field(default_factory=dict)
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-
-
-class SessionEventBus:
-    """Manages event streams for sessions.
-
-    Supports multiple subscribers per session and message queuing.
-    """
-
-    def __init__(self):
-        # Event queues for each subscriber (session_id -> list of queues)
-        self._subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
-        # Message queue for each session (messages waiting to be processed)
-        self._message_queues: dict[str, asyncio.Queue] = {}
-        # Currently processing flag per session
-        self._processing: dict[str, bool] = {}
-        # Lock for thread safety
-        self._lock = asyncio.Lock()
-
-    async def subscribe(self, session_id: str) -> asyncio.Queue:
-        """Subscribe to events for a session. Returns a queue that receives events."""
-        async with self._lock:
-            queue: asyncio.Queue = asyncio.Queue()
-            self._subscribers[session_id].append(queue)
-            return queue
-
-    async def unsubscribe(self, session_id: str, queue: asyncio.Queue):
-        """Unsubscribe from session events."""
-        async with self._lock:
-            if session_id in self._subscribers:
-                try:
-                    self._subscribers[session_id].remove(queue)
-                except ValueError:
-                    pass
-                if not self._subscribers[session_id]:
-                    del self._subscribers[session_id]
-
-    async def publish(self, session_id: str, event: SessionEvent):
-        """Publish event to all subscribers of a session."""
-        async with self._lock:
-            subscribers = self._subscribers.get(session_id, [])
-
-        for queue in subscribers:
-            try:
-                await queue.put(event)
-            except Exception:
-                pass  # Subscriber may have disconnected
-
-    async def queue_message(self, session_id: str, message: str, context: dict | None = None) -> bool:
-        """Queue a user message for processing. Returns True if queued."""
-        async with self._lock:
-            if session_id not in self._message_queues:
-                self._message_queues[session_id] = asyncio.Queue()
-
-            await self._message_queues[session_id].put((message, context))
-            return True
-
-    async def get_next_message(self, session_id: str) -> tuple[str, dict | None] | None:
-        """Get next message and context from queue, or None if empty."""
-        async with self._lock:
-            if session_id not in self._message_queues:
-                return None
-
-            try:
-                return self._message_queues[session_id].get_nowait()
-            except asyncio.QueueEmpty:
-                return None
-
-    def is_processing(self, session_id: str) -> bool:
-        """Check if session is currently processing."""
-        return self._processing.get(session_id, False)
-
-    def set_processing(self, session_id: str, value: bool):
-        """Set processing state for session."""
-        self._processing[session_id] = value
-
-
-# Global event bus
-event_bus = SessionEventBus()
 
 
 product_name = os.environ.get("PRODUCT_NAME", "major")
@@ -376,81 +288,6 @@ async def chat_sync(request: ChatRequest, auth: AuthContext = Depends(get_auth_c
         response=full_response,
     )
 
-
-# Background task storage for chat/send
-_running_sessions: dict[str, asyncio.Task] = {}
-
-
-class ChatSendResponse(BaseModel):
-    """Response from chat/send endpoint."""
-    session_id: str
-    status: str  # "started" or "already_running"
-
-
-@app.post("/chat/send", response_model=ChatSendResponse)
-async def chat_send(request: ChatRequest, auth: AuthContext = Depends(get_auth_context)):
-    """Send a chat message (fire-and-forget).
-
-    Starts Claude in background and returns immediately.
-    Poll /sessions/{session_id}/history to get updates.
-    """
-    workspace_path = os.environ.get("WORKSPACE_PATH", "/workspace")
-
-    # Generate a pending session ID if not provided
-    session_id = request.session_id
-    if not session_id:
-        import uuid
-        session_id = f"pending-{uuid.uuid4().hex[:8]}"
-
-    # Check if already running
-    if session_id in _running_sessions:
-        task = _running_sessions[session_id]
-        if not task.done():
-            return ChatSendResponse(session_id=session_id, status="already_running")
-
-    agent = get_agent()
-
-    async def run_chat():
-        """Run chat in background, writing to session files."""
-        nonlocal session_id
-        try:
-            async for event in agent.send_message(
-                message=request.message,
-                workspace_path=workspace_path,
-                session_id=session_id if not session_id.startswith("pending-") else None,
-            ):
-                event_type = type(event).__name__
-                if event_type == "ResultMessage":
-                    if hasattr(event, "session_id") and event.session_id:
-                        # Update with real session ID from SDK
-                        real_session_id = event.session_id
-                        session_manager.create_session(workspace_path, real_session_id, user_id=auth.user_id, org_id=auth.org_id)
-                        # Update tracking
-                        if session_id in _running_sessions:
-                            _running_sessions[real_session_id] = _running_sessions.pop(session_id)
-                        session_id = real_session_id
-            # Commit session to git (git as database - commit after every message)
-            git_commit(Path(workspace_path), f"Chat: {session_id}")
-        except Exception as e:
-            print(f"[CHAT_SEND] Background task error: {e}", flush=True)
-        finally:
-            # Clean up tracking
-            _running_sessions.pop(session_id, None)
-
-    # Start background task
-    task = asyncio.create_task(run_chat())
-    _running_sessions[session_id] = task
-
-    # Wait briefly for SDK to create the real session ID
-    await asyncio.sleep(0.5)
-
-    # Check if we got a real session ID
-    for sid, t in list(_running_sessions.items()):
-        if t is task and not sid.startswith("pending-"):
-            session_id = sid
-            break
-
-    return ChatSendResponse(session_id=session_id, status="started")
 
 
 # ============== Schema Endpoint ==============
@@ -1024,7 +861,7 @@ async def delete_session(session_id: str):
     return {"status": "deleted", "session_id": session_id}
 
 
-# ============== Slack-like Async Chat Endpoints ==============
+# ============== Async Message Endpoint (Worker Queue) ==============
 
 class MessageContext(BaseModel):
     """Page context sent with a message."""
@@ -1048,307 +885,29 @@ class SendMessageResponse(BaseModel):
 async def send_message(session_id: str, request: SendMessageRequest, auth: AuthContext = Depends(get_auth_context)):
     """Send a message to a session (fire-and-forget).
 
-    The message is queued and the agent will process it asynchronously.
-    Events are pushed to subscribers via the /sessions/{id}/events SSE endpoint.
+    The message is written to a pending queue on disk. The worker process
+    picks it up and processes it with MajorAgent. Poll /sessions/{id}/history
+    to see the response.
     """
     workspace_path = get_workspace_path()
 
     # Verify session exists or create it
     session = session_manager.get_session(workspace_path, session_id)
     if not session:
-        # Create the session
         session_manager.create_session(workspace_path, session_id, user_id=auth.user_id, org_id=auth.org_id)
 
-    # Generate message ID
-    message_id = f"msg-{uuid.uuid4().hex[:12]}"
-
-    # Queue the message with context
+    # Write message to pending queue — worker will pick it up
     ctx = request.context.model_dump() if request.context else None
-    await event_bus.queue_message(session_id, request.message, ctx)
-
-    # Publish user_message event to subscribers
-    await event_bus.publish(session_id, SessionEvent(
-        type="user_message",
-        data={"message": request.message, "message_id": message_id}
-    ))
-
-    # Start processing if not already running
-    if not event_bus.is_processing(session_id):
-        asyncio.create_task(_process_session_messages(session_id, workspace_path, auth))
+    message_id = session_manager.queue_pending_message(
+        workspace_path,
+        session_id,
+        request.message,
+        context=ctx,
+        user_id=auth.user_id,
+        org_id=auth.org_id,
+    )
 
     return SendMessageResponse(status="queued", message_id=message_id)
-
-
-async def _process_session_messages(session_id: str, workspace_path: str, auth: AuthContext | None = None):
-    """Process queued messages for a session.
-
-    Runs in background, picks up messages from queue, sends to agent,
-    publishes events to subscribers.
-    """
-    if event_bus.is_processing(session_id):
-        return  # Already processing
-
-    event_bus.set_processing(session_id, True)
-
-    # Track the actual SDK session ID (may differ from our session_id for new sessions)
-    sdk_session_id: str | None = None
-
-    # Check if SDK session file exists (determines if we should resume or create new)
-    sessions_dir = Path(workspace_path) / ".chelle" / "sessions"
-    session_file = sessions_dir / f"{session_id}.jsonl"
-    if session_file.exists():
-        sdk_session_id = session_id
-
-    try:
-        agent = get_agent()
-
-        while True:
-            # Get next message from queue
-            result = await event_bus.get_next_message(session_id)
-            if result is None:
-                break  # No more messages
-
-            message, context = result
-
-            # Build source constraint for source-grounded chat
-            source_constraint = None
-            if context and context.get("sourceIds"):
-                from .librarian import LibraryIndex
-                lib_index = LibraryIndex(workspace_path)
-                source_constraint = []
-                total_chars = 0
-                max_budget = 60000
-                for sid in context["sourceIds"]:
-                    if sid == "*":
-                        docs = lib_index.list_documents()
-                    elif lib_index.get_topic(sid):
-                        docs = lib_index.list_documents(topic_filter=[sid])
-                    else:
-                        doc = lib_index.get_document(sid)
-                        docs = [doc] if doc else []
-
-                    for doc in docs:
-                        if total_chars >= max_budget:
-                            break
-                        content = lib_index.get_document_content(doc.id)
-                        if content:
-                            truncated = content[:min(15000, max_budget - total_chars)]
-                            source_constraint.append({
-                                "title": doc.title,
-                                "content": truncated,
-                            })
-                            total_chars += len(truncated)
-                    if total_chars >= max_budget:
-                        break
-                # Store source_ids in session metadata for persistence
-                session_manager.update_session(
-                    workspace_path, session_id, source_ids=context["sourceIds"]
-                )
-
-            # Build attached_entities from page context
-            attached_entities = None
-            if context and context.get("currentEntity"):
-                entity_info = context["currentEntity"]
-                entity_type = entity_info.get("type")
-                entity_id = entity_info.get("id")
-                entity_title = entity_info.get("title", "Untitled")
-
-                if entity_type and entity_id:
-                    # Load entity content from workspace
-                    entity_path = Path(workspace_path) / entity_type / f"{entity_id}.md"
-                    entity_content = ""
-                    if entity_path.exists():
-                        entity_content = entity_path.read_text()
-                    attached_entities = [{
-                        "type": entity_type,
-                        "id": entity_id,
-                        "title": entity_title,
-                        "content": entity_content,
-                    }]
-            elif context and context.get("currentView"):
-                # Just note what section the user is viewing
-                view = context["currentView"]
-                attached_entities = [{
-                    "type": "navigation",
-                    "id": view,
-                    "title": f"User is currently viewing: {view}",
-                    "content": "",
-                }]
-
-            # Publish processing_start event
-            await event_bus.publish(session_id, SessionEvent(
-                type="processing_start",
-                data={"message": message}
-            ))
-
-            current_text = ""
-
-            try:
-                async for event in agent.send_message(
-                    message=message,
-                    workspace_path=workspace_path,
-                    session_id=sdk_session_id,  # None for new sessions, SDK creates its own ID
-                    attached_entities=attached_entities,
-                    source_constraint=source_constraint,
-                ):
-                    event_type = type(event).__name__
-
-                    if event_type == "AssistantMessage":
-                        # Extract text content
-                        if hasattr(event, "content"):
-                            for block in event.content:
-                                if hasattr(block, "text"):
-                                    delta = block.text[len(current_text):]
-                                    if delta:
-                                        current_text = block.text
-                                        await event_bus.publish(session_id, SessionEvent(
-                                            type="text_delta",
-                                            data={"text": delta}
-                                        ))
-                                # Check for tool use
-                                if hasattr(block, "type") and block.type == "tool_use":
-                                    tool_name = getattr(block, "name", "unknown")
-                                    await event_bus.publish(session_id, SessionEvent(
-                                        type="tool_use",
-                                        data={"tool": tool_name, "status": "running"}
-                                    ))
-
-                    elif event_type == "StreamEvent":
-                        # Raw stream event
-                        if hasattr(event, "type"):
-                            if event.type == "content_block_delta":
-                                if hasattr(event, "delta") and hasattr(event.delta, "text"):
-                                    await event_bus.publish(session_id, SessionEvent(
-                                        type="text_delta",
-                                        data={"text": event.delta.text}
-                                    ))
-                            elif event.type == "content_block_start":
-                                # Tool use start
-                                if hasattr(event, "content_block"):
-                                    block = event.content_block
-                                    if hasattr(block, "type") and block.type == "tool_use":
-                                        tool_name = getattr(block, "name", "unknown")
-                                        await event_bus.publish(session_id, SessionEvent(
-                                            type="tool_use",
-                                            data={"tool": tool_name, "status": "start"}
-                                        ))
-                            elif event.type == "content_block_stop":
-                                # Could be end of tool use
-                                await event_bus.publish(session_id, SessionEvent(
-                                    type="tool_use",
-                                    data={"status": "stop"}
-                                ))
-
-                    elif event_type == "ResultMessage":
-                        # Final result - capture SDK's session ID
-                        if hasattr(event, "session_id") and event.session_id:
-                            actual_sdk_id = event.session_id
-
-                            # If SDK used the same ID, update its metadata
-                            if actual_sdk_id == session_id:
-                                session_manager.create_session(
-                                    workspace_path, actual_sdk_id,
-                                    user_id=auth.user_id if auth else None,
-                                    org_id=auth.org_id if auth else None,
-                                )
-                            else:
-                                # SDK created a new session with different ID.
-                                # Don't register SDK ID as a separate session — it would
-                                # cause duplicates in the session list. Instead, symlink our
-                                # frontend session ID to the SDK's JSONL file.
-                                sdk_file = sessions_dir / f"{actual_sdk_id}.jsonl"
-                                our_file = sessions_dir / f"{session_id}.jsonl"
-                                if sdk_file.exists() and not our_file.exists():
-                                    try:
-                                        our_file.symlink_to(sdk_file.name)
-                                    except Exception:
-                                        pass  # Best effort
-
-                            # Use SDK's session ID for future messages in this batch
-                            sdk_session_id = actual_sdk_id
-
-                # Publish assistant_message with full content
-                if current_text:
-                    await event_bus.publish(session_id, SessionEvent(
-                        type="assistant_message",
-                        data={"content": current_text}
-                    ))
-
-                # Commit to git
-                git_commit(Path(workspace_path), f"Chat: {session_id}")
-
-            except Exception as e:
-                await event_bus.publish(session_id, SessionEvent(
-                    type="error",
-                    data={"error": str(e)}
-                ))
-
-        # All messages processed
-        await event_bus.publish(session_id, SessionEvent(
-            type="done",
-            data={"session_id": session_id}
-        ))
-
-    finally:
-        event_bus.set_processing(session_id, False)
-
-
-@app.get("/sessions/{session_id}/events")
-async def session_events(session_id: str):
-    """Subscribe to session events via Server-Sent Events.
-
-    On connect:
-    1. Sends 'connected' event
-    2. Sends 'history' event with all past messages
-    3. Streams real-time events (user_message, text_delta, tool_use, assistant_message, done, error)
-
-    Client should maintain this connection for the duration of the chat session.
-    """
-    workspace_path = get_workspace_path()
-
-    async def generate() -> AsyncGenerator[str, None]:
-        # Subscribe to events
-        queue = await event_bus.subscribe(session_id)
-
-        try:
-            # Send connected event
-            yield f"data: {json.dumps({'type': 'connected', 'session_id': session_id})}\n\n"
-
-            # Send history
-            try:
-                messages = session_manager.get_history(workspace_path, session_id)
-                history_data = [
-                    {"role": m.role, "content": m.content, "tool_name": m.tool_name}
-                    for m in messages
-                ]
-                yield f"data: {json.dumps({'type': 'history', 'messages': history_data})}\n\n"
-            except Exception:
-                # No history yet, that's fine
-                yield f"data: {json.dumps({'type': 'history', 'messages': []})}\n\n"
-
-            # Stream events
-            while True:
-                try:
-                    # Wait for event with timeout to send keepalive.
-                    # 15s keeps Vercel proxy alive (its idle timeout is ~30s).
-                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    yield f"data: {json.dumps({'type': event.type, **event.data, 'timestamp': event.timestamp})}\n\n"
-                except asyncio.TimeoutError:
-                    # Send keepalive
-                    yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
-
-        finally:
-            await event_bus.unsubscribe(session_id, queue)
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
-        }
-    )
 
 
 # ============== Library Endpoints ==============
