@@ -203,6 +203,9 @@ async def worker_loop() -> None:
             logger.info(f"Completed {msg_id}")
         except Exception:
             logger.exception(f"Failed to process {msg_id}")
+        finally:
+            # Mark session as no longer processing
+            session_manager.update_session(workspace_path, session_id, processing=False)
 
         # Always remove pending file (even on error) to prevent infinite retry
         session_manager.remove_pending(workspace_path, filename)

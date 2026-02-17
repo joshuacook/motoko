@@ -810,8 +810,14 @@ async def get_session_history(session_id: str) -> dict:
     workspace = get_workspace_path()
     messages = session_manager.get_history(workspace, session_id)
 
+    # Check processing status from metadata
+    metadata = session_manager._load_metadata(workspace)
+    session_meta = metadata.get(session_id, {})
+    processing = session_meta.get("processing", False)
+
     return {
         "session_id": session_id,
+        "processing": processing,
         "messages": [
             SessionMessageResponse(
                 role=m.role,
@@ -895,6 +901,9 @@ async def send_message(session_id: str, request: SendMessageRequest, auth: AuthC
     session = session_manager.get_session(workspace_path, session_id)
     if not session:
         session_manager.create_session(workspace_path, session_id, user_id=auth.user_id, org_id=auth.org_id)
+
+    # Mark session as processing
+    session_manager.update_session(workspace_path, session_id, processing=True)
 
     # Write message to pending queue — worker will pick it up
     ctx = request.context.model_dump() if request.context else None

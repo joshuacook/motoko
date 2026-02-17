@@ -226,6 +226,7 @@ class SessionManager:
         source_ids: list[str] | None = None,
         user_id: str | None = None,
         org_id: str | None = None,
+        processing: bool | None = None,
     ) -> SessionMetadata:
         """Update session metadata."""
         metadata = self._load_metadata(workspace_path)
@@ -251,6 +252,8 @@ class SessionManager:
             metadata[session_id]['user_id'] = user_id
         if org_id is not None:
             metadata[session_id]['org_id'] = org_id
+        if processing is not None:
+            metadata[session_id]['processing'] = processing
 
         metadata[session_id]['updated_at'] = datetime.utcnow().isoformat()
         metadata[session_id]['workspace_path'] = workspace_path
