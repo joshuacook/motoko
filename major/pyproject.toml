@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 major-server = "major.server:main"
+major-worker = "major.worker:main"
 
 [build-system]
 requires = ["hatchling"]
