@@ -527,7 +527,7 @@ async def list_entity_types() -> list[EntityType]:
     types = []
 
     # Directories that are entity types (not hidden, not special)
-    skip_dirs = {'.git', '.claude', '.chelle', 'node_modules', '__pycache__', '.venv'}
+    skip_dirs = {'.git', '.claude', '.combulate', 'node_modules', '__pycache__', '.venv'}
 
     for item in workspace.iterdir():
         if item.is_dir() and item.name not in skip_dirs and not item.name.startswith('.'):
