@@ -5,7 +5,7 @@ SDK JSONL files are the source of truth for conversation history.
 Local metadata files store UI-specific data (title, archived, project, etc).
 
 Storage structure:
-    /opt/workspaces/{username}/{workspace}/.chelle/sessions.json
+    /opt/workspaces/{username}/{workspace}/.combulate/sessions.json
 
     {
         "session_id_1": {"title": "...", "archived": false, "project_id": null, ...},
@@ -60,7 +60,7 @@ class SessionManager:
 
     def _get_metadata_path(self, workspace_path: str) -> Path:
         """Get path to sessions.json for a workspace."""
-        return Path(workspace_path) / ".chelle" / "sessions.json"
+        return Path(workspace_path) / ".combulate" / "sessions.json"
 
     def _get_sdk_sessions_dir(self, workspace_path: str) -> Path:
         """Get SDK sessions directory for a workspace.
@@ -433,7 +433,7 @@ class SessionManager:
 
     def _get_pending_dir(self, workspace_path: str) -> Path:
         """Get path to pending messages directory."""
-        return Path(workspace_path) / ".chelle" / "pending"
+        return Path(workspace_path) / ".combulate" / "pending"
 
     def queue_pending_message(
         self,

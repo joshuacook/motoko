@@ -1,7 +1,7 @@
 """Major worker - processes pending messages from the file-based queue.
 
 Runs as a separate process alongside the API server in the same pod.
-Polls .chelle/pending/ for messages, processes them with MajorAgent,
+Polls .combulate/pending/ for messages, processes them with MajorAgent,
 and the SDK writes results to JSONL session files.
 """
 
@@ -142,7 +142,7 @@ async def process_message(
         ]
 
     # Process with agent — SDK writes to JSONL automatically
-    sessions_dir = Path(workspace_path) / ".chelle" / "sessions"
+    sessions_dir = Path(workspace_path) / ".combulate" / "sessions"
     async for event in agent.send_message(
         message=message,
         workspace_path=workspace_path,
@@ -184,7 +184,7 @@ async def worker_loop() -> None:
     config = MajorConfig()
     agent = MajorAgent(config=config)
 
-    logger.info(f"Major worker started, watching {workspace_path}/.chelle/pending/")
+    logger.info(f"Major worker started, watching {workspace_path}/.combulate/pending/")
 
     while True:
         pending = session_manager.get_next_pending(workspace_path)
